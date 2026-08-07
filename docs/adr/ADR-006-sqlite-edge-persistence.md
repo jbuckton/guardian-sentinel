@@ -23,10 +23,17 @@ Use **SQLite** for the first edge implementation. SQLite is authoritative locall
 
 ### Separation of concerns
 
-Separate **operational** state from **high-volume telemetry** — as separate SQLite database files (preferred) or, at minimum, independently managed tables with independent writers:
+Operational state and high-volume telemetry live in **two separate SQLite database files**. This is the accepted topology, not a preference: a single file with independently managed tables is **rejected** here because it reintroduces exactly the cross-writer lock contention that ADR-007 (single writer per database) exists to eliminate, and the implementation plan assumes two files. Each file has exactly one owning writer (ADR-007).
 
-- **Operational DB:** configuration, versions, alerts, incidents, findings, outbound delivery state, core's replay checkpoint (ADR-005), device-health summaries.
-- **Telemetry DB:** normalised telemetry and observations, batched and downsampled under bounded retention.
+- **Operational DB** — owner: the **operational writer**. Holds configuration, rule/decoder versions, findings, alerts, incidents, outbound delivery state, core's replay checkpoint (ADR-005), evidence-pin references (the pin request IDs and pinned ranges tracked against incidents), and device-health history. All immediate-durability writes land here.
+- **Telemetry DB** — owner: the **telemetry writer**. Holds normalised telemetry and observations, batched and downsampled under bounded retention.
+
+### Ownership of ambiguous records
+
+- **Observations** live in the telemetry DB (they are high-volume, derived from telemetry, and downsamplable) and are written by the telemetry writer. A **finding** that promotes an observation copies or references the evidence into the operational DB, where its durability and retention are governed by operational, not telemetry, rules.
+- **Device-health** history is operational (it drives alerts and must survive telemetry pruning) and is written by the operational writer.
+- **Evidence references** — pointers into the ingestion log's pinned ranges (ADR-005) — are operational and written by the operational writer, so an incident and the evidence it pins share one durable owner and cannot diverge.
+- Neither writer writes to the other's database; cross-database consistency is achieved by each writer owning its side and referencing the other by durable identity, never by a shared transaction across files.
 
 ### Write discipline
 
@@ -40,6 +47,7 @@ Separate **operational** state from **high-volume telemetry** — as separate SQ
 - eMMC wear is controlled by batching, downsampling and keeping raw frames out of the database.
 - Operational writes (an alert transition) are never queued behind a telemetry batch.
 - Two databases require the writer-ownership rule in ADR-007 to avoid lock contention masquerading as ingestion lag.
+- Retention bounds and exhaustion policy for both databases are specified in ADR-013 (storage quotas), which reserves capacity for safety-relevant operational state ahead of telemetry.
 - A future move to another store (if ever needed) is a new ADR; nothing in the MVP schema should assume one.
 
 ## Alternatives considered

@@ -11,10 +11,12 @@ The first deployments cover two known physical configurations. Guardian Sentinel
 
 The first supported installation profiles are:
 
-- **`48-10`** — expected cell count: 32
-- **`48-20`** — expected cell count: 64
+- **`48-10`** — expected cell count: 32 *(provisional)*
+- **`48-20`** — expected cell count: 64 *(provisional)*
 
 These names are installation/product profiles only. **Do not infer battery chemistry, series/parallel topology, voltage thresholds or thermistor layout solely from the profile names.**
+
+**Provenance:** the 32- and 64-cell figures are provisional working assumptions, not yet confirmed against hardware. Before a profile is used to validate a real deployment, its expected cell count and every field below must be populated from **that unit's Orion Jr 2 configuration export and documentation**, and the profile record must cite that source (export file/version and date). A profile whose fields are not backed by an actual configuration export is marked unconfirmed and must not be used to assert a telemetry mismatch is a fault (see G2/Phase 2 in the implementation plan).
 
 Each deployed profile must explicitly define:
 
@@ -35,6 +37,7 @@ Profile definitions live in `profiles/` as versioned configuration consumed by `
 
 - A mismatch between profile expectations and observed telemetry (e.g. cell count, broadcast set) is a loud, explicit fault — never silently reconciled.
 - Every assembled battery snapshot records expected cell count, received fresh-cell count, missing/stale cell indices, coherence, quality, and source/decoder version, evaluated against the active profile.
+- Recording this quality metadata is necessary but **not sufficient**: metadata alone does not stop an incomplete snapshot from being reported as healthy. The snapshot's derived health state (`unknown`/`degraded`/`fault`/`healthy`, where `healthy` requires complete and fresh critical inputs) is governed by **ADR-012**; this profile's expectations are one of the inputs to that state machine, and a profile mismatch forces a `fault` state there.
 
 ## Consequences
 

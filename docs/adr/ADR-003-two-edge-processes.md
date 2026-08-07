@@ -40,6 +40,31 @@ Responsible for:
 
 The SocketCAN receive loop must never block on core processing, SQLite, MQTT, HTTP, dashboard access, or Claude/AI services. All downstream paths use bounded queues. If a consumer cannot keep up: record consumer lag; spool to the bounded local log (ADR-005); mark ingestion degraded; count and expose dropped frames; never silently lose evidence.
 
+### Canonical ingestion path
+
+The ingestion log (ADR-005) — not the IPC socket — is the canonical, authoritative record. The receive loop's ordering of durable operations is:
+
+1. Assign session ID + sequence number and stamp wall-clock and monotonic receipt time (ADR-004).
+2. **Append the envelope to the ingestion log before offering it to the IPC send queue.** An event that is durably logged but not yet delivered over IPC is never lost: `guardian-core` will obtain it by replay-after-checkpoint (ADR-005). IPC is a low-latency fast path over the log, not a second source of truth.
+3. Offer the event to the bounded IPC send queue. If the queue is full, drop from the **IPC path only** (core recovers the event by replay); the log append must already have succeeded.
+
+The log append itself must not block the receive loop indefinitely. The log writer runs behind its own bounded queue; the receive loop hands off and continues. If the log-writer queue is full, or the append cannot complete (disk full, slow storage, rotation/compression stall), the loop:
+
+- counts the affected events and the affected sequence range,
+- emits an **ingestion-overflow event** (ADR-004) recording that count and range,
+- marks ingestion degraded in device-health,
+
+and continues receiving — it never stalls SocketCAN waiting for storage. Loss of durability is thus always bounded, counted, ordered, and alertable; it is never silent.
+
+Rotation and compression run without dropping the tail: the active segment remains appendable while a prior segment compresses, and termination during rotation must leave a recoverable log (a partially written segment is detectable and skipped on restart, not replayed as valid events).
+
+### Acceptance criteria (Phase 4)
+
+- Sustained input above nominal Jr 2 frame rate with `guardian-core` stopped: no receive-loop stall; every event either delivered on reconnect via replay or accounted for by an ingestion-overflow event.
+- Disk-full and artificially slowed storage during ingestion: overflow events emitted with correct counts/ranges; no silent loss; device-health shows degraded.
+- Process kill (SIGKILL) of `guardian-can` during segment rotation: on restart the log opens cleanly, the partial segment is skipped, and no corrupt event is replayed.
+- IPC send-queue saturation with the log healthy: dropped IPC events are all recovered by core via replay-after-checkpoint; final processed set equals the logged set (subject to the delivery contract in ADR-011).
+
 ### IPC
 
 Unix domain socket, framed binary protocol (MessagePack or equivalent), carrying the versioned typed event envelope defined in ADR-004.
