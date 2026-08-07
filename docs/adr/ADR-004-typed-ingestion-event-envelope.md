@@ -14,7 +14,7 @@ All data crossing the `guardian-can` → `guardian-core` boundary (live IPC and 
 ### Envelope fields (every event)
 
 - Schema version
-- Boot/session identity (see **Session identity and ordering** below)
+- **Durable session generation** and kernel `boot_id` (see **Session identity and ordering** below)
 - Monotonic per-session sequence number
 - Event type
 - Source interface (e.g. `can0`)
@@ -32,20 +32,24 @@ All data crossing the `guardian-can` → `guardian-core` boundary (live IPC and 
 5. **Clock adjustment** — wall-clock corrections (e.g. NTP step after connectivity), recording old time, new time and monotonic time of the adjustment
 6. **Ingestion overflow** — bounded buffer/spool overflow: count of dropped events and the affected sequence range
 7. **Ingestion gap** — an explicit evidence-gap marker emitted when a requested replay range has expired from the log (ADR-005)
-8. **Session start** — first record of a `guardian-can` session: session ID, the session's `boot_id` (from the kernel), monotonic clock origin, and the previous session ID if one is known from durable state
+8. **Session start** — first record of a `guardian-can` session: durable session generation, kernel `boot_id`, monotonic clock origin, the previous generation if known from durable state, and a session-generation-discontinuity flag when generation state had to be recovered (see below)
 9. **Session end** — clean-shutdown marker for a session, when one can be written; its absence marks the session as incomplete
 
 ### Session identity and ordering
 
-A session ID is an **identity, not an ordering relation**. Sequence numbers are monotonic **only within a session** and reset when a new session begins. Therefore:
+A session's identity is a **durable session generation**, not its position in the log and not a bare sequence number. Sequence numbers are monotonic **only within a session** and reset when a new session begins.
 
-- Order **within** a session is defined by its sequence numbers, assigned at ingestion before any buffering, so ordering survives spooling and replay.
-- Order **across** sessions is defined by the **append order of session-start records in the ingestion log**, not by comparing sequence numbers or timestamps between sessions. The log is the authority for "session A precedes session B."
-- Each session carries the kernel `boot_id`, so sessions can be grouped by device boot. `guardian-can` and `guardian-core` restart independently; a `guardian-core` restart does not begin a new `guardian-can` session, and a `guardian-can` restart (new session) is always visible to core as a session-start record.
-- A session lacking a session-end record is **incomplete**: it was truncated by crash, power loss, or kill. Core treats the boundary between an incomplete session and the next session as a potential evidence discontinuity and records it as such.
-- "After checkpoint" (ADR-005) is defined against the pair `(session ordinal in log, sequence number)`, never against a bare sequence number, because sequence numbers are not comparable across sessions.
+**Durable session generation.** `guardian-can` maintains a strictly monotonic session-generation counter in persistent state (a small durable record, synced independently of the rotating log). On each new session it allocates `generation = last + 1`, **persists the new value before releasing the session's first event**, and stamps that generation into every event's envelope. Generations are never reused and never decrease.
 
-Monotonic time is valid only within a single boot; it **cannot** establish order across boots or sessions. Cross-boot correlation relies on log append order and, where available, wall-clock time qualified by its confidence.
+- **Stable identity.** The canonical **event identity** is the pair `(session generation, sequence number)`. Because generation lives in `guardian-can`'s durable state — not in the log's byte layout — this identity survives log rotation, prefix eviction, trace export, and process restart. It is the key used for checkpoints, pin ranges, derived-record keys, and uplink idempotency tokens (ADR-005/011).
+- **Within-session order** is defined by sequence numbers, assigned at ingestion before any buffering, so ordering survives spooling and replay.
+- **Cross-session order** is defined by **ascending session generation** (the log's append order of session-start records agrees with it and is the physical realisation). Sequence numbers and timestamps are never compared across sessions.
+- Each session also carries the kernel `boot_id`, so sessions group by device boot. `guardian-can` and `guardian-core` restart independently: a `guardian-core` restart does not begin a new session; a `guardian-can` restart allocates the next generation and is always visible to core as a session-start record.
+- A session lacking a session-end record is **incomplete** (truncated by crash, power loss, or kill). Core treats the boundary between an incomplete session and the next generation as a potential evidence discontinuity and records it as such.
+
+**Recovery if generation state is lost or corrupt.** If the durable generation record is missing or fails validation at startup, `guardian-can` must not reuse or regress a generation. It allocates a new generation strictly greater than any it could previously have emitted, using a persisted high-water hint; if that is also unavailable, it derives a monotonic lower bound from another durable source (e.g. a boot counter, or a wall-clock-derived floor once time is trusted) and jumps the counter above it. It then emits a **session-generation-discontinuity** marker in the session-start payload so `guardian-core` records the uncertainty as an evidence-health fault rather than assuming contiguity.
+
+Monotonic time is valid only within a single boot; it **cannot** establish order across boots or sessions. Cross-boot correlation relies on session generation and, where available, wall-clock time qualified by its confidence.
 
 Serialisation: MessagePack (or an equivalently simple framed binary format). Schema version is bumped on any incompatible change; core must reject unknown versions explicitly rather than guessing.
 

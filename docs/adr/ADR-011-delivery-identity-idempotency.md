@@ -13,7 +13,7 @@ Guardian Sentinel's internal event pipeline is **at-least-once delivery with ide
 
 ### Stable event identity
 
-- Every ingestion event has the durable identity `(session ordinal in log, sequence number)` (ADR-004/005). This pair, not a bare sequence number, is the idempotency key for all downstream effects.
+- Every ingestion event has the durable identity `(session generation, sequence number)` (ADR-004/005), where session generation is a monotonic counter persisted by `guardian-can`. This pair — stable across log rotation, prefix eviction, trace export and restart, not a bare sequence number — is the idempotency key for all downstream effects, including the uplink idempotency token.
 - Derived records carry a **deterministic key** traceable to the event(s) that produced them: a telemetry row keys on `(event identity, signal)`; an observation on `(event identity, rule, signal)`; a finding on `(rule, entity, incident-open event identity)`; an alert transition on `(alert key, transition ordinal)`. Re-processing the same inputs yields the same keys.
 
 ### Idempotency obligations

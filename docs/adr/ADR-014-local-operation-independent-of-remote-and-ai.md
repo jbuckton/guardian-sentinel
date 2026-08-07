@@ -11,7 +11,7 @@
 
 Local safety function — decoding, snapshot health-state (ADR-012), deterministic rules, findings, alert/incident lifecycle, persistence (ADR-006/007), evidence capture and pinning (ADR-005), device-health, and the local API/status page — depends on **no remote or AI service**.
 
-- The device must reach full local function **from a cold boot with DNS, the MQTT broker, the backend, Grafana, and all AI/Claude services unreachable**, and remain there indefinitely.
+- The device must reach full local function **from a cold boot with DNS, the MQTT broker, the backend, Grafana, and all AI/Claude services unreachable**, and remain there indefinitely — with data degradation bounded and made explicit by the storage policy (ADR-013), never a silent failure.
 - Remote services are consumers/records downstream of local truth (ADR-008); their unavailability changes only what is *uploaded/visualised later*, never what is *detected, decided, or stored* locally.
 - **AI/Claude tooling is strictly advisory and read-only (ADR-009).** Its output is explanation over already-captured evidence. AI failure, timeout, or absence must never affect findings, alert state, health state, or any stored record. No finding or alert may depend on an AI call.
 - When remote is unreachable, outbound data is stored-and-forwarded within bounded backlog and reserve (ADR-013) and uploaded, duplicate-safe, on reconnection (ADR-011). Loss beyond retention bounds is explicit and alertable, never silent.
