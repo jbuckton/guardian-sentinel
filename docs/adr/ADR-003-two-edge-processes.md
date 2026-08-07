@@ -42,28 +42,29 @@ The SocketCAN receive loop must never block on core processing, SQLite, MQTT, HT
 
 ### Canonical ingestion path
 
-The ingestion log (ADR-005) — not the IPC socket — is the canonical, authoritative record. The receive loop's ordering of durable operations is:
+The ingestion log (ADR-005) — not the IPC socket — is the canonical, authoritative record. **Durable append is the gate for IPC visibility, and queue admission is not durability.** The pipeline is:
 
-1. Assign session ID + sequence number and stamp wall-clock and monotonic receipt time (ADR-004).
-2. **Append the envelope to the ingestion log before offering it to the IPC send queue.** An event that is durably logged but not yet delivered over IPC is never lost: `guardian-core` will obtain it by replay-after-checkpoint (ADR-005). IPC is a low-latency fast path over the log, not a second source of truth.
-3. Offer the event to the bounded IPC send queue. If the queue is full, drop from the **IPC path only** (core recovers the event by replay); the log append must already have succeeded.
+1. The **receive loop** assigns the event identity `(session generation, sequence number)` (ADR-004) and stamps wall-clock and monotonic receipt time, then enqueues the event to the **log writer's** bounded queue and returns immediately. It performs no durable I/O itself, so SocketCAN never blocks on storage. Enqueuing is *admission to the log writer*, not a durability guarantee.
+2. The **log writer** durably appends the event to the ingestion log. **Only after the append is confirmed durable** does the log writer release the event to the IPC send queue. Consequently every event core can ever see over IPC is already durably logged, and an event durably logged but not yet delivered over IPC is recoverable by replay-after-checkpoint (ADR-005). IPC is a fast path over the log, never a second source of truth.
+3. If the IPC send queue is full, the event is dropped **from the IPC path only** — it is already durable, so core recovers it by replay. This drop is benign and needs no gap marker.
 
-The log append itself must not block the receive loop indefinitely. The log writer runs behind its own bounded queue; the receive loop hands off and continues. If the log-writer queue is full, or the append cannot complete (disk full, slow storage, rotation/compression stall), the loop:
+**When the log itself is the failed path** (log-writer queue saturated, disk full, slow storage, or a rotation/compression stall), the event cannot be made durable, so the ordinary "emit an ingestion-overflow event into the log" response is unavailable — that write would fail too. The survivable mechanism is:
 
-- counts the affected events and the affected sequence range,
-- emits an **ingestion-overflow event** (ADR-004) recording that count and range,
-- marks ingestion degraded in device-health,
+- A small, **pre-allocated emergency journal** on a reserved reservation (ADR-013), separate from the rotating log and sized so a write there cannot itself hit disk-full, records the **lost sequence range(s)** (session generation + first/last dropped sequence) and a monotonic timestamp.
+- The receive loop keeps assigning sequence numbers to dropped events (it never stops counting), so the loss appears as a **sequence discontinuity** in the log. On recovery, `guardian-can` reconciles the emergency journal against the log and **synthesises ingestion-overflow / ingestion-gap events** (ADR-004) covering exactly the discontinuous ranges, which core then processes in order.
+- Device-health is marked degraded immediately. The loop continues receiving; it never stalls SocketCAN waiting for storage.
 
-and continues receiving — it never stalls SocketCAN waiting for storage. Loss of durability is thus always bounded, counted, ordered, and alertable; it is never silent.
+Loss of durability is therefore always bounded, counted (by the emergency journal and/or the sequence discontinuity), ordered, and alertable — never silent — even when the primary log is the component that failed.
 
 Rotation and compression run without dropping the tail: the active segment remains appendable while a prior segment compresses, and termination during rotation must leave a recoverable log (a partially written segment is detectable and skipped on restart, not replayed as valid events).
 
 ### Acceptance criteria (Phase 4)
 
-- Sustained input above nominal Jr 2 frame rate with `guardian-core` stopped: no receive-loop stall; every event either delivered on reconnect via replay or accounted for by an ingestion-overflow event.
-- Disk-full and artificially slowed storage during ingestion: overflow events emitted with correct counts/ranges; no silent loss; device-health shows degraded.
-- Process kill (SIGKILL) of `guardian-can` during segment rotation: on restart the log opens cleanly, the partial segment is skipped, and no corrupt event is replayed.
-- IPC send-queue saturation with the log healthy: dropped IPC events are all recovered by core via replay-after-checkpoint; final processed set equals the logged set (subject to the delivery contract in ADR-011).
+- Sustained input above nominal Jr 2 frame rate with `guardian-core` stopped: no receive-loop stall; every event either delivered on reconnect via replay or accounted for by a synthesised gap/overflow event.
+- **Log-path failure injection** — disk-full and artificially slowed/stalled storage during ingestion: the emergency journal records the lost sequence ranges; on recovery, overflow/gap events are synthesised for exactly the sequence discontinuities; no silent loss; device-health shows degraded.
+- **Emergency-journal survivability** — disk-full occurring *before* the loss is recorded: the reserved journal write still succeeds (it is pre-allocated), or, if even that is impossible, the sequence discontinuity alone is sufficient for core to synthesise the gap on recovery. No loss is silent under either sub-case.
+- Process kill (SIGKILL) of `guardian-can` during segment rotation: on restart the log opens cleanly, the partial segment is skipped, no corrupt event is replayed, and any discontinuity across the kill is reported as a gap.
+- IPC send-queue saturation with the log healthy: dropped IPC events are all recovered by core via replay-after-checkpoint with no gap marker (they were durable); final processed set equals the logged set (subject to the delivery contract in ADR-011).
 
 ### IPC
 

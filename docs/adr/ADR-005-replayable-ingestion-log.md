@@ -14,32 +14,33 @@
 ### Restart semantics
 
 1. `guardian-can` never blocks live CAN receipt waiting for `guardian-core`.
-2. Every ingestion event carries a session identity and a per-session sequence number (assigned at ingestion). The durable **event identity** used for checkpointing and idempotency is the pair `(session ordinal in log, sequence number)` — a bare sequence number is not comparable across sessions (ADR-004).
-3. `guardian-core` durably records its processed checkpoint as that event-identity pair in its operational database, under the checkpoint-advancement rules below.
-4. On reconnecting, core requests available events strictly after its checkpoint.
-5. `guardian-can` replays the requested range from the ingestion log up to a declared **end-of-replay watermark**, then hands off to live per the handoff protocol below.
+2. Every ingestion event carries a durable session generation and a per-session sequence number (assigned at ingestion). The durable **event identity** used for checkpointing and idempotency is the pair `(session generation, sequence number)` (ADR-004) — stable across log rotation, prefix eviction and restart, and comparable across sessions by generation.
+3. `guardian-core` durably records two processed positions (below) as event identities in its operational database, under the checkpoint-advancement rules.
+4. On reconnecting, core requests available events strictly after its **resume position** = `min(safety checkpoint, telemetry watermark)`.
+5. `guardian-can` replays from the resume position via iterative log-backed catch-up up to a **live threshold**, then hands off to live per the handoff protocol below.
 6. If part of the requested range has expired from the bounded log, `guardian-can` emits an explicit **ingestion-gap event** covering the missing range; core records it as an evidence gap and raises the appropriate device-health observation.
 7. Replay and live data pass through the **same decoder and processing path** in core. No separate replay code path is permitted.
 
-### Checkpoint advancement rules
+### Checkpoint advancement rules (two watermarks)
 
-A single ingestion event can produce effects in more than one durable store: the telemetry DB, the operational DB (findings, alert transitions, incidents), and outbound delivery state (ADR-006/007). A crash between those writes must never leave the checkpoint claiming an event is done when its safety-relevant effects are not durable.
+A single ingestion event can produce effects in more than one durable store with different durability timing: the operational DB commits findings, alert transitions and incidents *immediately*, while the telemetry DB commits *batched* (ADR-006). A single "processed" checkpoint cannot honestly represent both — if it advanced on safety effects alone, an event whose telemetry was still in an uncommitted batch would fall *before* the resume position after a crash and its telemetry would be lost, never replayed. Core therefore keeps **two durable positions**:
 
-- The checkpoint for an event may advance **only after all of that event's required durable effects have committed.** "Required durable effects" are the immediate-durability writes of ADR-006: findings, alert transitions, incident state, bus-off, and configuration changes.
-- Batched, downsamplable telemetry writes (ADR-006) are **not** required effects for checkpoint advancement; on replay they are re-derived idempotently (see ADR-011). The checkpoint therefore reflects safety-relevant durability, not every telemetry row.
-- Enqueuing to the outbound MQTT delivery queue is a durable operational write (owned per ADR-007); it counts as a required effect. Actual MQTT transmission/acknowledgement does **not** gate the checkpoint (delivery is store-and-forward, ADR-008/011).
-- Because the checkpoint may lag committed effects, **all effect application must be idempotent under the event-identity key** (ADR-011). Re-processing the window between last-committed-effect and checkpoint on restart must produce no duplicate findings, no duplicate alert transitions, and no double-counted telemetry.
-- Checkpoint writes are themselves immediate-durability operational writes.
+- **Safety checkpoint** — advances only after an event's required durable safety effects have committed. "Required durable effects" are the immediate-durability writes of ADR-006: findings, alert transitions, incident state, bus-off, and configuration changes, plus enqueue to the durable outbound delivery queue (ADR-007). Actual MQTT transmission/ack does **not** gate it (store-and-forward, ADR-008/011).
+- **Telemetry watermark** — advances only when a telemetry batch has committed, to the identity of the last event in the committed batch.
+
+**Resume position = `min(safety checkpoint, telemetry watermark)`.** On restart core replays from there, so it re-covers every event whose telemetry had not yet committed as well as any whose safety effects had not. All effect application is **idempotent under the event identity** (ADR-011): re-processing the window between the two watermarks produces no duplicate finding, no duplicate alert transition, and no double-counted telemetry, while guaranteeing the previously-uncommitted telemetry is now written. No bounded telemetry loss is accepted; if a future decision ever chose to accept some, it would have to state and quantify that contract explicitly here.
+
+Both positions are written as immediate-durability operational writes.
 
 ### Replay-to-live handoff protocol
 
-Ingestion continues while core is catching up, so the replay range and the live tail must be joined without a gap and without an unbounded race:
+Ingestion continues while core is catching up, and a long replay can produce more live events than any bounded IPC buffer can hold. The handoff therefore drains from the **canonical log by iterative catch-up**, and never assumes a live-tail buffer survives the replay:
 
-1. When core requests events after its checkpoint, `guardian-can` fixes an **end-of-replay watermark** at the current log head (an event identity) and replays `(checkpoint, watermark]` from the log.
-2. Events that arrive **after** the watermark are appended to the log as normal and buffered for IPC; they are the live tail that will follow the replayed range in order.
-3. Core processes the replayed range in order up to the watermark, then transitions to consuming the live tail beginning at `watermark + 1`. Because both come from the same ordered log identities, the join is exact: no event between watermark and live resumption is skipped or reordered.
-4. Core acknowledges reaching the watermark; the handoff is complete only after that acknowledgement. If core dies mid-replay, its checkpoint is unchanged (or advanced only per the rules above) and the whole protocol repeats from the durable checkpoint — never from an in-memory position.
-5. The only permitted duplication is re-delivery of events at or before the checkpoint on a repeated handoff, which idempotency (ADR-011) absorbs. Any other duplication or any gap is a defect.
+1. **Successor operation.** Define `next(identity)` over event identities: within a session `(g, s) → (g, s+1)` while `s+1` exists in generation `g`; at a session boundary it advances to `(g′, s₀)` where `g′` is the least session generation greater than `g` that exists in the log and `s₀` is that session's first sequence. "After position P" always means the range beginning at `next(P)`; there is no bare `watermark + 1` across a session boundary.
+2. **Catch-up loop.** From the resume position, `guardian-can` fixes an **end-of-range watermark** at the current log head and replays that range from the log. Because ingestion continues, the head has advanced by the time core finishes; core requests the next log-backed range `(last processed, new head]`. This repeats until the gap between core's position and the live head is within a defined **live threshold** (a bounded number of events / bounded time). Each range is served from the durable log, so replay depth is limited only by the log, not by any buffer.
+3. **Live transition.** Once within the live threshold, core subscribes to the live IPC tail; the log writer releases newly durable events (ADR-003) starting at `next(core's last processed)`. Only this final, threshold-bounded gap is ever bridged by the in-memory IPC buffer, so the buffer can be small and fixed. If at any point the live tail outruns the buffer, core falls back to another log-backed catch-up range rather than dropping — the log is always the backstop.
+4. **Crash safety.** Core acknowledges each processed range durably via its watermarks; if core dies mid-handoff, it resumes from `min(safety checkpoint, telemetry watermark)` — never from an in-memory position — and the loop repeats.
+5. **Permitted duplication.** The only duplication is re-delivery at or before the resume position on a repeated handoff, absorbed by idempotency (ADR-011). Any other duplication, or any gap, is a defect.
 
 ### Evidence pinning (reverse control channel)
 
@@ -50,6 +51,7 @@ Ingestion continues while core is catching up, so the replay range and the live 
 - **Race with rotation:** if any part of the requested range has already been evicted when the pin arrives, `guardian-can` pins what remains and returns the evicted sub-range so core can record an evidence gap — pinning never silently succeeds over missing data.
 - **Pin quota:** pinned evidence has a hard bounded budget (ADR-013). When pinning would exceed it, eviction is **deterministic and safety-ordered**: the oldest pins for already-closed incidents are released first, active-incident pins last; every eviction of pinned evidence emits an ingestion-gap/eviction event so the loss is recorded. Pinning is never allowed to exhaust storage and stall ingestion.
 - Pin and unpin are idempotent on the request ID; a repeated pin request after a core restart re-establishes the same pin without duplicating storage.
+- **Startup reconciliation.** The pin *reference* lives in core's operational DB while the durable pin *index* lives in `guardian-can` (ADR-006); the two can drift across independent restarts. On (re)connection core **reissues all pins for still-open incidents** and `guardian-can` reports its current active pin index. Any discrepancy — a core-referenced pin missing from can's index, or a can-side pin with no live reference — is recorded as an explicit **evidence-health fault**, not silently reconciled, so an incident whose evidence has actually been lost cannot appear intact.
 
 ### Bounds and retention
 
@@ -64,15 +66,18 @@ The same log format and replay mechanism serve as the input for the Phase 2 trac
 ### Acceptance criteria (Phase 4)
 
 - **Continuous high-rate reconnect:** sustained above-nominal input across a `guardian-core` restart produces no unmarked gap at the replay→live join, and the only duplicates observed are those permitted by the delivery contract (ADR-011).
-- **Crash injection at each boundary:** SIGKILL of core (a) mid-replay, (b) after committing a finding but before checkpoint advance, and (c) after checkpoint advance — each recovers with no lost finding, no duplicate finding, no duplicate alert transition, and no double-counted telemetry.
-- **Expired range:** requesting a checkpoint older than the log's tail yields an ingestion-gap event for exactly the missing range and a device-health observation.
+- **Replay exceeds IPC buffer:** a replay whose backlog and duration exceed the live-tail buffer's capacity while ingestion continues completes via iterative log-backed catch-up with no gap and no buffer overrun; the buffer bridges only the final threshold-bounded tail.
+- **Telemetry durability (no missing telemetry):** SIGKILL of core after the **safety checkpoint** advances but **before** the telemetry batch commits — on restart the telemetry for those events is present (resume from `min` watermark re-covers them) with no duplicate and no double-count.
+- **Crash injection at each boundary:** SIGKILL of core (a) mid-replay, (b) after committing a finding but before safety-checkpoint advance, and (c) after checkpoint advance — each recovers with no lost finding, no duplicate finding, no duplicate alert transition, and no double-counted telemetry.
+- **Expired range:** requesting a resume position older than the log's tail yields an ingestion-gap event for exactly the missing range and a device-health observation.
 - **Pinning under rotation:** a pin request racing eviction pins the surviving range and reports the evicted sub-range; pin quota exhaustion evicts deterministically and emits eviction events.
+- **Pin reconciliation:** induced drift between core's pin references and `guardian-can`'s pin index is detected at startup and raised as an evidence-health fault, never silently reconciled.
 
 ## Consequences
 
 - Core restarts lose no evidence within log bounds; losses beyond bounds are explicit, ordered, alertable events.
 - One decoder path means every recorded trace is automatically a regression test input.
-- Checkpoint persistence lives with core's operational state (ADR-006/007), keeping ownership clear; its advancement is gated on durable safety-relevant effects, so it reflects real durability, not mere consumption.
+- The safety checkpoint and telemetry watermark both live with core's operational state (ADR-006/007), keeping ownership clear; resume-from-`min` reflects real durability of *both* safety effects and telemetry, not mere consumption.
 - The delivery/idempotency guarantee this relies on is specified in ADR-011; storage/pin quotas and exhaustion policy in ADR-013.
 - Log bounds trade eMMC wear and storage against replay depth; this tuning is a named Phase 4 task.
 
