@@ -10,7 +10,7 @@ Durable decisions for Guardian Sentinel. Each ADR records one decision, its cont
 | [ADR-002](ADR-002-python-prototype-runtime.md) | Python as the prototype runtime | Accepted |
 | [ADR-003](ADR-003-two-edge-processes.md) | Two edge processes: `guardian-can` and `guardian-core` | Accepted |
 | [ADR-004](ADR-004-typed-ingestion-event-envelope.md) | Versioned typed ingestion-event envelope | Accepted |
-| [ADR-005](ADR-005-replayable-ingestion-log.md) | Bounded replayable local ingestion log with checkpointed restart | Accepted |
+| [ADR-005](ADR-005-replayable-ingestion-log.md) | Bounded ingestion buffer: tiered durability, explicit gaps, replay-based testing | Accepted |
 | [ADR-006](ADR-006-sqlite-edge-persistence.md) | SQLite for edge persistence, separated by concern | Accepted |
 | [ADR-007](ADR-007-single-writer-per-database.md) | Single-writer ownership per SQLite database | Accepted |
 | [ADR-008](ADR-008-backend-authoritative-grafana-optional.md) | Guardian backend authoritative; Grafana optional | Accepted |

@@ -5,11 +5,11 @@
 
 ## Context
 
-The ingestion log (ADR-005), the IPC boundary (ADR-003/004), the two SQLite writers (ADR-006/007) and MQTT store-and-forward (ADR-008) together form a chain where the same event is delivered more than once by design: replay-after-checkpoint re-delivers events, the replay→live handoff re-delivers around its watermark, and MQTT store-and-forward re-sends on reconnection. Without a single, explicit delivery guarantee and a stable event identity, "no silent gap" and "no duplicate finding" cannot both be true, and each component would invent its own dedup rule. This ADR fixes one contract the whole chain obeys.
+The ingestion buffer (ADR-005), the IPC boundary (ADR-003/004), the two SQLite writers (ADR-006/007) and MQTT store-and-forward (ADR-008) together form a chain where the same event can be delivered more than once by design: buffer replay after a `guardian-core` restart re-delivers events, and MQTT store-and-forward re-sends on reconnection. Without a stable event identity and one dedup rule, "no duplicate finding" cannot be guaranteed, and each component would invent its own. This ADR fixes one contract the whole chain obeys — independent of how much durability (ADR-005) is turned on.
 
 ## Decision
 
-Guardian Sentinel's internal event pipeline is **at-least-once delivery with idempotent effect application, keyed on a stable event identity.** Exactly-once is neither claimed nor relied upon; correctness comes from idempotency, not from never re-delivering.
+Guardian Sentinel's internal event pipeline provides **idempotent effect application keyed on a stable event identity**, over a delivery channel that is **at-least-once for events that are delivered at all.** Exactly-once is neither claimed nor relied upon. In the best-effort MVP (ADR-005) an event may also be delivered **zero** times — a gap — but such loss is always explicit (sequence discontinuity → gap event) and never silent; idempotency governs the "delivered ≥ 1 time" case, explicit gaps govern the "delivered 0 times" case. This contract is unchanged when durability is later turned up: raising durability only shrinks the set of events that can hit the zero-delivery case; it does not change the identity or idempotency rules.
 
 ### Stable event identity
 
@@ -27,9 +27,9 @@ Guardian Sentinel's internal event pipeline is **at-least-once delivery with ide
 
 - Effects are applied in event-identity order within a session and in log-append order across sessions (ADR-004). Idempotency covers re-delivery; **ordering** covers correctness of state machines (an alert clear must not be applied before its raise). Both hold simultaneously.
 
-### Relationship to checkpointing
+### Relationship to restart and replay
 
-- The checkpoint may lag committed effects (ADR-005). The window between last-committed-effect and checkpoint is re-processed on restart; idempotency makes that re-processing safe. This is the sole reason at-least-once is acceptable rather than a liability.
+- On restart core resumes from its last-seen position and re-processes whatever the ingestion buffer still holds (ADR-005); idempotency makes that re-processing safe (no duplicate finding, no double-counted telemetry). Events the buffer no longer holds are an explicit gap, not a duplicate. When the durable tier (ADR-005) is enabled, the same idempotency rules cover the larger re-processed window a durable checkpoint produces — no rule here changes.
 
 ### MQTT delivery guarantee (uplink)
 

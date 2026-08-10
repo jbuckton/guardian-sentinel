@@ -1,8 +1,10 @@
 # Guardian Sentinel — Implementation Plan
 
-**Version:** 0.4
-**Date:** 2026-08-07
+**Version:** 0.5
+**Date:** 2026-08-09
 **Status:** Accepted working plan. Durable decisions live in [ADRs](adr/README.md); this plan references them and does not restate their rationale.
+
+**Changes from v0.4 (durability right-sized for the CM4):** ADR-005 reworked from a zero-loss durable log to a **tiered durability model, best-effort by default** — best-effort CAN stream with explicit gaps (Tier 0), pre-roll incident evidence persisted on trigger (Tier 1), durable operational safety state (Tier 2). The MVP takes **no per-frame `fsync`**, cutting eMMC wear by orders of magnitude; the zero-loss durable tier (durable-append-before-IPC, checkpointed/dual-watermark replay, emergency journal) is documented and **deferred**. ADR-003 ingestion path relaxed to best-effort + explicit gaps; ADR-006 write discipline made tier-explicit; ADR-011 restated as idempotency over an at-least-once channel that may also drop (explicit gap) events; ADR-004 session-generation persistence relaxed to best-effort in MVP. Safety is preserved by explicitness (a gap degrades health, never masquerades as healthy — ADR-012), not by durability.
 
 **Changes from v0.3 (second architecture-review resolutions):** durable session generation replaces log-position identity, stable across rotation/eviction/export (ADR-004); durability gates IPC visibility with an emergency-journal path for log/disk failure (ADR-003); dual safety-checkpoint + telemetry-watermark resume prevents telemetry loss (ADR-005); replay→live handoff drains via iterative log-backed catch-up rather than trusting the IPC buffer (ADR-005); storage policy adds compaction and an honest bounded-current-safety terminal contract (ADR-013); evidence-pin startup reconciliation added (ADR-005). G2 market inference marked provisional.
 
@@ -24,7 +26,7 @@ Build a read-only edge prototype that:
 6. Continues operating fully offline, uploading buffered data on reconnection
 
 **Local acceptance gate (Definition of Done, part A — must pass first):**
-Exercised with DNS, MQTT, backend, Grafana and AI all unreachable from cold boot (ADR-014): the Orion Jr 2 (or its trace replay) produces CAN telemetry → `guardian-can` captures it → `guardian-core` decodes it via the `orion_jr2` adapter → pack/cell state is visible with an explicit health state (ADR-012) and snapshot quality → a simulated abnormal condition triggers a local finding with linked evidence → a local alert is raised and durably stored → `guardian-core` is restarted mid-stream and resumes from its checkpoint via log replay with no silent gap and no duplicate finding (ADR-005/011) → all of this remains true with no network and no AI, within bounded storage/backlog and reserve (ADR-013).
+Exercised with DNS, MQTT, backend, Grafana and AI all unreachable from cold boot (ADR-014): the Orion Jr 2 (or its trace replay) produces CAN telemetry → `guardian-can` captures it → `guardian-core` decodes it via the `orion_jr2` adapter → pack/cell state is visible with an explicit health state (ADR-012) and snapshot quality → a simulated abnormal condition triggers a local finding with linked evidence (pre-roll persisted on trigger) → a local alert is raised and **durably** stored (Tier 2, ADR-005) → `guardian-core` is restarted mid-stream, resumes live, and replays the buffered window through the same decoder path with **no duplicate finding**; any un-buffered portion is an **explicit marked gap, not a zero-loss claim** (ADR-005/011) → all of this remains true with no network and no AI, within bounded storage/backlog and reserve (ADR-013).
 
 **End-to-end demo target (Definition of Done, part B):**
 Building on part A: a remote alert is delivered → network is cut and local operation continues → buffered data uploads duplicate-safe after reconnection (ADR-011) → a concise Claude-generated incident explanation is produced from captured evidence. Remote delivery and the Claude summary are downstream of local truth; their failure never alters local findings or alert state (ADR-014).
@@ -39,7 +41,7 @@ Building on part A: a remote alert is delivered → network is cut and local ope
 - Installation profiles `48-10` (32 cells) and `48-20` (64 cells), explicitly defined (ADR-010)
 - Two edge processes: `guardian-can` and `guardian-core` (ADR-003), Python (ADR-002)
 - Versioned typed ingestion-event envelope (ADR-004)
-- Bounded replayable ingestion log with checkpointed restart (ADR-005); at-least-once delivery with idempotent, event-identity-keyed effect application (ADR-011)
+- Bounded ingestion buffer with **tiered durability** — best-effort stream + explicit gaps by default, durable safety state, pre-roll incident evidence; zero-loss durable tier deferred (ADR-005); idempotent, event-identity-keyed effect application (ADR-011)
 - SQLite persistence, two-file operational/telemetry separation, single writer per database (ADR-006/007); per-consumer storage quotas with a safety reserve and exhaustion policy (ADR-013)
 - Deterministic local rules (thresholds, rate-of-change, staleness, coherence) over an explicit snapshot health-state model (ADR-012)
 - MQTT 5 over TLS with store-and-forward into Guardian's backend; Grafana as optional visualisation (ADR-008); local safety function independent of remote and AI availability (ADR-014)
@@ -80,7 +82,7 @@ A missing or stale cell value remains explicitly missing or stale — never carr
 - **Edge runtime:** Python (ADR-002); `guardian-can` + `guardian-core` (ADR-003)
 - **CAN:** SocketCAN, can-utils, python-can, cantools
 - **IPC:** Unix domain socket, MessagePack-framed typed envelope (ADR-004)
-- **Raw evidence:** bounded rotated compressed ingestion log, replayable (ADR-005)
+- **Raw evidence:** bounded RAM ring + best-effort rotated/compressed on-disk log, tiered durability, replayable for tests (ADR-005)
 - **Storage:** SQLite, two-file operational + telemetry separation, single writer per DB (ADR-006/007); quotas + safety reserve (ADR-013)
 - **Telemetry:** MQTT 5 over TLS, store-and-forward → Guardian backend (ADR-008); at-least-once, duplicate-safe by idempotency token (ADR-011)
 - **Networking:** NetworkManager, ModemManager, GPSD; Tailscale/WireGuard (dev)
@@ -123,8 +125,9 @@ As v0.1 (eMMC flash, Ethernet/PoE, modem + AU bands + 48 h cellular soak, GNSS d
 
 ### Phase 4 — Local Guardian Runtime (3–4 weeks)
 
-- Stand up both processes under systemd with the IPC boundary and non-blocking rules (ADR-003), implementing the canonical ingestion path (log writer releases to IPC only after **confirmed durable append**; IPC drops recoverable by replay; when the log/disk is the failed path, a **pre-allocated emergency journal** plus sequence-discontinuity synthesis records lost ranges; never block the receive loop)
-- **Restart/replay implementation (ADR-004/005/011):** durable **session generation** in `guardian-can` state; **two durable positions** in the operational DB (safety checkpoint + telemetry watermark), resume from `min(...)` so no telemetry is lost; reconnect → **iterative log-backed catch-up** to a live threshold → live transition via the `next(identity)` successor (handles session boundaries); all effects idempotent under `(generation, sequence)` (ADR-011); expired-range handling emits ingestion-gap events; restart-mid-stream, replay-exceeds-IPC-buffer, and crash-at-each-boundary (incl. kill after checkpoint before telemetry commit) tests are standing regressions (no lost/duplicate finding, no missing/double-counted telemetry)
+- Stand up both processes under systemd with the IPC boundary and non-blocking rules (ADR-003), implementing the **best-effort ingestion path** (RAM ring + best-effort on-disk log, **no per-frame `fsync`**; drops surface as sequence discontinuities → explicit gap/overflow events; never block the receive loop)
+- **Tiered durability (ADR-005):** Tier 0 stream/telemetry best-effort; Tier 1 incident evidence via RAM **pre-roll persisted on trigger**; Tier 2 operational safety state (alert/incident, acks, config, decoder/profile version) **durable on change**. All effects idempotent under `(session generation, sequence)` (ADR-011)
+- **Restart/replay (MVP):** `guardian-core` restart → resume live, replay the still-buffered window through the same decoder path, un-buffered portion is an **explicit marked gap** (no zero-loss claim); session generation gives stable identity for idempotency; restart-mid-stream and buffer-overflow-→-gap tests are standing regressions (no duplicate finding, no double-counted telemetry). *(Zero-loss durable tier — durable-append, checkpointed replay, emergency journal — is deferred, ADR-005.)*
 - **Typed event handling (ADR-004):** frames, CAN state changes, CAN errors, interface restarts, clock adjustments, ingestion overflow, ingestion gaps, session start/end — ordered **within a session by sequence and across sessions by durable session generation** (never a bare session+sequence comparison), and interleaved correctly in state and incident timelines
 - **Clock correction handling:** wall-clock steps recorded as events; timelines remain reconstructible across steps via monotonic time
 - SQLite: **two separate database files** (operational + telemetry), WAL, batched telemetry writes, immediate durable writes for findings/alert transitions/bus-off/config changes; **single owning writer per database file with bounded submission queues — MQTT delivery-state updates go through the operational writer** (ADR-006/007); observations owned by the telemetry writer, device-health and evidence-pin references by the operational writer
@@ -134,7 +137,7 @@ As v0.1 (eMMC flash, Ethernet/PoE, modem + AU bands + 48 h cellular soak, GNSS d
 - Alert lifecycle (hysteresis, dedup, escalation, first-occurrence preservation); incident snapshots; device self-health incl. consumer lag, dropped-frame counts, writer queue depth
 - Local REST API + minimal status page
 
-**Exit criteria:** every MVP rule fires and clears under replay and fault injection; core restart mid-incident loses no evidence within log bounds, produces explicit gap events beyond them, and yields no duplicate finding/alert or double-counted telemetry across crash-at-each-boundary tests (ADR-011); storage exhaustion degrades in the ADR-013 eviction order with the reserve intact and eviction events recorded; the **offline-first local acceptance gate (ADR-014)** passes with DNS/MQTT/backend/Grafana/AI down from boot; one-week soak with bounded resources and no writer contention.
+**Exit criteria:** every MVP rule fires and clears under replay and fault injection; core restart mid-incident replays the buffered window and marks any un-buffered loss as an **explicit gap** (health degrades — never a healthy claim over a gap), with no duplicate finding/alert or double-counted telemetry (ADR-011); Tier 2 safety state survives reboot (active alarm not forgotten); storage exhaustion degrades in the ADR-013 eviction order with the reserve intact and eviction events recorded; **steady-state disk writes stay bounded with no per-frame `fsync`** (endurance sanity check in soak); the **offline-first local acceptance gate (ADR-014)** passes with DNS/MQTT/backend/Grafana/AI down from boot; one-week soak with bounded resources and no writer contention.
 
 ### Phase 5 — Remote Telemetry + Backend (2–3 weeks; requires G6)
 
