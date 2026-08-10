@@ -37,10 +37,12 @@ Operational state and high-volume telemetry live in **two separate SQLite databa
 
 ### Write discipline
 
-- Batched transactions for routine telemetry; immediate durable writes for findings, alert transitions, bus-off events and configuration changes.
-- Bounded retention with downsampling tiers; retention limits are configuration.
-- Raw CAN frames are **never** synchronously inserted into SQLite. Raw evidence lives in the bounded ingestion log (ADR-005), with high-resolution evidence pinned around incidents.
-- WAL mode; exact PRAGMA/durability settings validated in Phase 4 power-loss testing.
+Durability is applied **per data class**, matching the tiers in ADR-005, so the high-volume path never pays frame-rate `fsync` (the dominant eMMC-wear risk on the CM4):
+
+- **Operational safety state (Tier 2) is durable on change** — findings, alert transitions, incident state, bus-off, and configuration changes are written with immediate durability. This is low-volume and rare, so its `fsync` cost is negligible, and forgetting an active alarm across a reboot is unacceptable.
+- **Telemetry is best-effort and batched (Tier 0)** — batched transactions, downsampling tiers, bounded retention (limits are configuration). Loss is permitted but surfaces as an explicit gap (ADR-005); it is never `fsync`ed per row.
+- Raw CAN frames are **never** synchronously inserted into SQLite. Raw evidence lives in the bounded ingestion buffer (ADR-005), best-effort in the MVP, with incident evidence pinned via pre-roll on trigger.
+- WAL mode. The MVP deliberately **avoids per-event `fsync`**: telemetry on `synchronous=NORMAL` (fsync at checkpoint, not per commit); operational on `FULL` (cheap at its volume). Exact PRAGMA/group-commit/durability tuning — and any move toward the ADR-005 durable tier — is deferred to Phase 4 power-loss and endurance testing, not fixed here.
 
 ## Consequences
 
