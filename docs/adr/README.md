@@ -10,13 +10,13 @@ Durable decisions for Guardian Sentinel. Each ADR records one decision, its cont
 | [ADR-002](ADR-002-python-prototype-runtime.md) | Python as the prototype runtime | Accepted |
 | [ADR-003](ADR-003-two-edge-processes.md) | Two edge processes: `guardian-can` and `guardian-core` | Accepted |
 | [ADR-004](ADR-004-typed-ingestion-event-envelope.md) | Versioned typed ingestion-event envelope | Accepted |
-| [ADR-005](ADR-005-replayable-ingestion-log.md) | Bounded ingestion buffer: tiered durability, explicit gaps, replay-based testing | Accepted |
+| [ADR-005](ADR-005-replayable-ingestion-log.md) | Best-effort bounded ingestion buffer with explicit gaps | Accepted |
 | [ADR-006](ADR-006-sqlite-edge-persistence.md) | SQLite for edge persistence, separated by concern | Accepted |
 | [ADR-007](ADR-007-single-writer-per-database.md) | Single-writer ownership per SQLite database | Accepted |
 | [ADR-008](ADR-008-backend-authoritative-grafana-optional.md) | Guardian backend authoritative; Grafana optional | Accepted |
 | [ADR-009](ADR-009-no-actuation-mvp.md) | No actuation in the MVP | Accepted |
 | [ADR-010](ADR-010-installation-profiles.md) | Installation profiles `48-10` (32 cells) and `48-20` (64 cells) | Accepted |
-| [ADR-011](ADR-011-delivery-identity-idempotency.md) | Event delivery, identity and idempotency contract | Accepted |
+| [ADR-011](ADR-011-delivery-identity-idempotency.md) | Event identity and best-effort idempotency (first cut) | Accepted |
 | [ADR-012](ADR-012-battery-health-state-model.md) | Explicit battery snapshot health-state model | Accepted |
 | [ADR-013](ADR-013-storage-quotas-exhaustion-policy.md) | Storage quotas and exhaustion policy | Accepted |
 | [ADR-014](ADR-014-local-operation-independent-of-remote-and-ai.md) | Local operation independent of remote and AI services | Accepted |

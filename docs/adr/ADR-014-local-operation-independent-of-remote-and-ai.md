@@ -22,10 +22,11 @@ Local safety function — decoding, snapshot health-state (ADR-012), determinist
 A local acceptance gate, distinct from the full end-to-end demo, is exercised with DNS, MQTT, backend, Grafana, and AI **unavailable from boot**. It must prove:
 
 - local detection: every MVP rule fires and clears under replay/fault injection with no network;
-- persistence: findings, alert transitions, incidents, checkpoint, and pinned evidence are durable across power loss with no network;
-- operator visibility: the local API/status page shows health state and active incidents offline;
+- **Tier-2 durability:** operational safety state — findings, alert/incident state, acknowledgements, config, decoder/profile version — survives power loss with no network (ADR-005/006). This is the tier the gate *promises and tests*;
+- **Tier-0/1 loss is permitted and stated:** the CAN stream and pre-roll incident evidence are best-effort (ADR-005); a power loss may drop the in-flight window and un-persisted pre-roll. The gate verifies such loss surfaces as an explicit gap that degrades health/data-confidence (ADR-012), **not** that it is retained;
+- operator visibility: the local API/status page shows health state, data-confidence, and active incidents offline;
 - bounded resource isolation: backlog and storage stay within quotas/reserve (ADR-013); a slow/failed AI or uplink path never blocks ingestion (ADR-003) or alters findings;
-- later recovery: on reconnection, buffered data uploads duplicate-safe (ADR-011) with no loss within retention bounds.
+- later recovery: on reconnection, buffered data uploads best-effort duplicate-safe by token (ADR-011); Tier-0 gaps remain gaps.
 
 This gate passes **before** the remote/Claude portions of the Definition of Done are exercised.
 
