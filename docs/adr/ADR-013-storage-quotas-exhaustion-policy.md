@@ -19,40 +19,27 @@ Each storage consumer has a **hard, explicit quota**, and total quotas plus a re
 - **Operational DB** — bounded, but see reserved capacity below; it is evicted last and least.
 - **Outbound MQTT backlog** — bounded queue with priority (alerts first) and throttling (ADR-008); when full, lowest-priority telemetry is dropped from the backlog before any alert/finding.
 
-### Reserved capacity for safety-relevant state
+### Reserved capacity and eviction order
 
-- A **reserve** is held that only the operational DB and the outbound alert/finding queue may consume. Telemetry, observations, and routine log data may never encroach on it.
-- Under global pressure the eviction order is fixed and safety-ordered: (1) oldest downsampled telemetry, (2) routine (unpinned) ingestion-log tail, (3) closed-incident pinned evidence, (4) low-priority outbound backlog — and **never** *current* operational safety state (open findings, live alert/incident state, checkpoints, config) or queued alert uplinks, which live in the reserve.
+- A **reserve** is held that only *current* operational safety state (open findings, live alert/incident state, last-seen marker, config) and queued alert uplinks may use; telemetry, observations, and routine log data never encroach on it.
+- Under pressure, eviction follows a fixed safety order: (1) oldest downsampled telemetry, (2) unpinned ingestion-log tail, (3) closed-incident pinned evidence, (4) low-priority outbound backlog — never the reserved set above.
 
-### Compaction keeps protected state bounded
+### Compaction keeps the protected set bounded
 
-"Never evicted" is only honest if the protected set is itself **bounded**; unbounded accumulation of history cannot coexist with a finite device and indefinite operation. Protected state is therefore kept bounded by **compaction**, distinct from eviction — compaction preserves the current safety truth while discarding redundant history:
+"Never evicted" is only honest if the protected set is bounded. **Compaction** (distinct from eviction) discards redundant history while keeping current safety truth: closed incidents collapse to durable summaries after a window (their bulk evidence then evictable); superseded alert transitions collapse to current state plus a bounded history (first occurrence kept); acknowledged items become compaction-eligible; undelivered uplinks are bounded per priority (newest-per-entity). The current-safety working set thus stays within the reserve while history degrades gracefully.
 
-- **Closed incidents** are retained in full for a configured window, then **compacted to a durable summary** (outcome, peak values, evidence references, timestamps); their bulk pinned evidence (ADR-005) becomes eligible for eviction once compacted.
-- **Superseded alert transitions** collapse to the alert's current state plus a bounded transition history (first occurrence always preserved); older intermediate transitions are compacted away.
-- **Acknowledged** alerts/incidents become eligible for compaction once acknowledgement is durably recorded (and, if acknowledgement happened remotely, once that ack is confirmed delivered locally).
-- **Undelivered uplinks** are bounded per priority: within the alert/finding class the queue coalesces duplicates by idempotency token (ADR-011) and retains newest-per-entity; it does not grow without bound while offline.
+### Exhaustion behaviour
 
-This makes the *current* safety state a bounded working set that fits within the reserve, while history degrades gracefully rather than growing until it collides with the bound.
-
-### Exhaustion behaviour and terminal state
-
-- Approaching any quota raises a **device-health observation** and, past a configured threshold, an alert — storage pressure is itself a monitored condition, not a surprise.
-- Eviction of any evidence (log tail or pinned range) emits the corresponding ingestion-gap/eviction event (ADR-004/005) so loss is recorded, ordered, and alertable — never silent.
-- If pressure reaches the reserve, the device enters a declared **degraded-persistence** state (surfaced in device-health and reflected in ADR-012 reporting): it keeps ingesting and detecting, keeps current safety state durable, runs compaction aggressively, and sheds the lowest-value data first; it never stalls ingestion (ADR-003) and never drops a finding or alert transition to free space for telemetry.
-- **Terminal case — reserve full of only protected, non-compactable records** (e.g. many simultaneous *unacknowledged, open* incidents plus undelivered *critical* uplinks): the guarantee "current safety state is never evicted" is preserved for as long as that set fits the reserve. When it cannot, the device does **not** stall ingestion and does **not** silently drop safety state. It:
-  1. raises a top-priority **persistence-saturated** alert (itself reserved space, pre-allocated so it can always be raised),
-  2. stops accepting new low-priority persistence entirely,
-  3. and only if the reserved safety set still cannot be admitted, sheds the **oldest, lowest-priority within the protected class** (e.g. an oldest already-summarised closed-incident record, or an oldest low-criticality undelivered uplink) with an **explicit, recorded, alertable** loss event — because an honest, ordered, logged loss of the least-critical protected record is safer than a silent stall or an arbitrary failure.
-  This bounds the promise precisely: **indefinite operation is guaranteed for the bounded current-safety working set; beyond it, loss is explicit, prioritised, and never silent.** Reserve size is provisioned in Phase 4 against the worst-case concurrent-open-incident count so the terminal case is reached only under genuinely extreme, alerted conditions.
-- Writes of current safety state must not fail for lack of space while any lower-priority or compactable data remains reclaimable; the writer reclaims (compact, then evict in order) before ever failing such a write.
+- Approaching a quota raises a device-health observation, then an alert — storage pressure is a monitored condition.
+- Evidence eviction emits an eviction/gap event (ADR-004/005) and degrades data-confidence (ADR-012).
+- At the reserve, the device declares **degraded-persistence**: keeps ingesting and detecting, compacts aggressively, sheds lowest-value data first; never stalls ingestion, never drops a finding/alert to free space for telemetry.
+- **Terminal case** (reserve full of only protected, non-compactable records): it raises a pre-allocated **persistence-saturated** alert, stops new low-priority persistence, and only if still stuck sheds the oldest/lowest-priority *within* the protected class with an explicit loss event. The promise is bounded honestly: guaranteed for the bounded current-safety set; beyond it, loss is explicit and prioritised, never a silent stall. Reserve size is provisioned in Phase 4 against worst-case concurrent open incidents.
 
 ## Consequences
 
-- A long offline outage or an incident storm degrades predictably: telemetry resolution and replay depth shrink first, then incident *history* compacts; the current-safety working set and alert uplinks survive within a bounded, provisioned reserve, and any loss beyond that bound is explicit and prioritised — never silent, never a stall.
-- The competing consumers have a single arbitration policy instead of racing for free space.
-- Quotas + reserve size are named Phase 4 tuning tasks against eMMC endurance and required replay/evidence depth; they are configuration, so field tuning needs no code change.
-- Provides the concrete bounds ADR-005 (log), ADR-006 (DB retention), and ADR-008 (backlog) each referred to without specifying.
+- A long outage or incident storm degrades predictably: telemetry resolution shrinks first, then history compacts; the current-safety set and alert uplinks survive within the reserve, with any further loss explicit.
+- One arbitration policy instead of consumers racing for free space.
+- Quotas + reserve size are Phase 4 tuning (configuration); they give the concrete bounds ADR-005/006/008 refer to without specifying.
 
 ## Alternatives considered
 

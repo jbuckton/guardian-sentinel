@@ -1,66 +1,47 @@
-# ADR-005: Bounded Ingestion Buffer — Tiered Durability, Explicit Gaps, Replay-Based Testing
+# ADR-005: Best-Effort Bounded Ingestion Buffer with Explicit Gaps
 
 **Status:** Accepted
-**Date:** 2026-08-09
-**Supersedes the durability stance of the 2026-08-06 draft** ("no evidence loss within bounds, checkpointed zero-loss replay"), which imposed per-event durability unjustified for the MVP and hostile to eMMC endurance. The envelope, sequence numbering, replay-through-the-production-path testing and the pin control channel are retained; the zero-loss *guarantee* is replaced by a tunable durability model whose MVP default is best-effort with explicit gaps.
+**Date:** 2026-08-06
 
 ## Context
 
-`guardian-core` will restart (upgrades, crashes, watchdog) while `guardian-can` keeps receiving live traffic. The earlier draft required every event to be durably logged before use so a restart could lose nothing — but that forces `fsync` at CAN frame rates, which is the dominant eMMC-wear risk on the CM4 (small synchronous writes → large write amplification), and it is not what safety actually requires.
-
-The safety property is **explicitness, not durability**: a missed window is safe *if it is known to be missed*. During a gap the health state degrades to `unknown`/`degraded` (ADR-012), so the device never reports health it does not have. That is categorically different from silently carrying stale data forward. Durability buys *evidence completeness*, which is valuable but is a tunable quality knob, not a safety invariant — and different data classes justify very different amounts of it.
+The one hard constraint on the edge is keeping up with a high-speed CAN bus: the SocketCAN receive loop must not fall behind the bus tick rate, or frames are lost at the socket. Absolute zero-loss is a hardware/driver property, not something an in-process Python edge service can honestly guarantee. The MVP is therefore **explicitly allowed to miss data**. The requirement is not that loss never happens, but that missing data is never mistaken for healthy data (ADR-012).
 
 ## Decision
 
-`guardian-can` maintains a **bounded ingestion buffer**: a RAM ring of recent typed events (ADR-004 envelope) backed by a bounded, rotated, compressed on-disk log written **best-effort** (coarse batched flushes; **no per-event `fsync`** in the MVP). Durability is applied per data class, and is a **configuration knob**, not a fixed guarantee.
+`guardian-can` keeps a **bounded RAM ring** of typed events (ADR-004), drained best-effort to IPC and to a bounded, rotated, compressed on-disk log. The receive loop does the minimum per frame — assign identity + timestamps, enqueue — and **never blocks on storage, IPC, or core**. Keeping up with the bus takes priority over retaining every frame.
 
-### Durability tiers (MVP defaults; all tunable)
+### Durability tiers (MVP; each tunable later via a new ADR)
 
-- **Tier 0 — CAN stream / telemetry (best-effort).** Loss is permitted but **never silent.** Because every event carries a per-session sequence number (ADR-004), any loss shows as a **sequence discontinuity**; the receiver synthesises an **ingestion-gap event** for exactly the missing range, and health degrades accordingly (ADR-012). This is the high-volume path and the one that must not `fsync` per frame.
-- **Tier 1 — Incident evidence (pre-roll, persist on trigger).** `guardian-can` keeps a RAM **pre-roll** ring of the last *N* seconds/events. When `guardian-core` detects a finding it requests, over the reverse channel, that the pre-roll plus a following incident window be persisted (pinned). In the MVP this persist is **best-effort** (no `fsync` — see "Deferred: durable tier"); it still captures the run-up to every *detected* incident at near-zero steady-state write cost. An unlucky crash exactly at incident onset may lose pre-roll — accepted for the first pilot, revisited when the durable tier lands.
-- **Tier 2 — Operational safety state (durable).** Current alert/incident state, acknowledgements, configuration, and decoder/profile version are **durably written on change** (ADR-006 operational writer). This is kilobytes changing rarely, so its `fsync` cost is negligible — and forgetting an active alarm across a reboot is a real safety regression, not a "missed window." This tier stays durable even in the MVP.
+- **Tier 0 — CAN stream / telemetry: best-effort, lossy.** Under pressure, frames are dropped. No per-frame `fsync`.
+- **Tier 1 — Incident evidence: best-effort pre-roll.** A RAM pre-roll of recent frames is persisted when core signals a finding; an unlucky crash at incident onset may lose it.
+- **Tier 2 — Operational safety state: durable.** Active alert/incident state, acknowledgements, config, and decoder/profile version are durably written on change (ADR-006). Low-volume, rare — the one thing that must survive a reboot, because forgetting an active alarm is a safety regression.
 
-### Restart semantics (MVP: best-effort resume + explicit gap)
+### Gaps are flagged best-effort, not proven exact
 
-1. `guardian-can` never blocks live CAN receipt waiting for `guardian-core`.
-2. On reconnect, `guardian-can` replays whatever remains in its buffer after `guardian-core`'s last-seen position, then transitions to live. Core's last-seen position is a **lightweight, loosely-persisted** marker — not a durably-`fsync`ed checkpoint in the MVP.
-3. Anything the buffer no longer holds (evicted, or lost because guardian-can itself restarted) is covered by an explicit **ingestion-gap event**; core records the evidence gap and raises the device-health observation. There is no attempt to guarantee zero loss across the outage.
-4. **Replay and live data pass through the same decoder and processing path** in core. No separate replay code path is permitted — this is what keeps recorded traces valid as tests and is retained unchanged.
+Sequence discontinuity (ADR-004) detects most loss. Some loss cannot be exactly quantified — a dropped session tail with no following event, frames arriving while `guardian-can` is down, a simultaneous can/core restart, or a gap marker lost on the same saturated path. So the MVP:
 
-Because loss is possible, `guardian-core` writes all effects **idempotently under event identity** (ADR-011): buffer replay and MQTT reconnection can re-deliver events, and re-delivery must never double-count telemetry or duplicate a finding/alert transition. Idempotency is required in every tier; durability is not.
+- counts IPC-path and log-path loss separately (best-effort);
+- supports **open-ended / unknown-extent** gap markers, not only exact ranges;
+- treats any gap as an evidence-confidence loss that forces the health state out of `healthy` (ADR-012).
 
-### Evidence-pin control channel (retained, best-effort in MVP)
+We do **not** claim every loss is exactly measured or never silent. Exhaustive gap accounting is a later hardening (a new ADR), not first-cut scope.
 
-`guardian-can` owns the raw evidence; `guardian-core` detects the incident. Pinning uses an explicit **core→can control channel** over the same socket:
+### Restart & replay
 
-- Core issues a **pin request** naming a range by event identity (or "pin the pre-roll plus the next window") with a request ID; `guardian-can` acknowledges and exempts that range from routine eviction.
-- If part of the range is already gone (Tier 0 best-effort), `guardian-can` reports the missing sub-range so core records an evidence gap — pinning never silently succeeds over absent data.
-- Pins are idempotent on the request ID; pinned evidence is bounded by the storage quota (ADR-013) and evicted in a deterministic, safety-ordered way (closed incidents first) with recorded eviction/gap events.
-- **Startup reconciliation:** on (re)connection core reissues pins for open incidents and `guardian-can` reports its active pin set; any drift becomes an explicit **evidence-health fault**, never silently reconciled.
+On a `guardian-core` restart, core resumes from a **lightweight last-seen marker** (best-effort, not a durable checkpoint) and re-reads whatever the ring still holds through the **same decoder path** — no separate replay path, so recorded traces stay valid as tests. Anything the ring no longer holds is a gap. Re-reads may re-deliver events; effects tolerate that (ADR-011), but the MVP does not depend on strict idempotency.
 
-### Bounds and retention
+### Test-harness role
 
-- The buffer/log is size- and/or time-bounded with rotation and compression; bounds are configuration, tuned in Phase 4 against eMMC endurance vs. incident-evidence needs.
-- Raw CAN traffic is **never** synchronously inserted into SQLite (ADR-006); the ingestion buffer/log is the raw-evidence store.
-
-### Test-harness role (unchanged)
-
-The envelope format and replay mechanism are the input for the Phase 2 trace library, Phase 3 adapter tests, and fault injection. Recorded Jr 2 sessions live in `traces/` in this format. A trace file is a *deliberate* durable capture (a dev activity), independent of runtime Tier 0 durability.
-
-### Deferred: durable tier (future config / ADR)
-
-Raising Tier 0/1 to a **zero-loss** guarantee — durable-append-before-IPC, a durably-`fsync`ed checkpoint (or dual safety/telemetry watermarks with `min`-resume), iterative log-backed catch-up beyond the live buffer, and an emergency journal for disk-full — is a **documented upgrade path**, not MVP scope. It is enabled by turning the durability knob up (and accepting the `fsync`/endurance cost) and is gated on a future decision when a deployment needs guaranteed evidence continuity. The envelope, sequence numbering, event identity `(session generation, sequence)`, and pin channel already in place make that upgrade additive rather than a redesign.
+The envelope format and buffer replay are the Phase 2 trace library and Phase 3 adapter tests; recorded Jr 2 sessions live in `traces/`. A trace file is a deliberate durable capture, independent of Tier-0 runtime loss.
 
 ## Consequences
 
-- **eMMC wear drops by orders of magnitude:** steady state is memory-speed buffering with coarse flushes; `fsync` happens only on rare Tier-2 safety-state changes and (optionally) Tier-1 incident persistence — not at frame rate.
-- Core restarts may lose the in-flight window; that loss is **explicit, ordered, and alertable** (gap events + degraded health), never silent — consistent with the fail-explicitly principle.
-- One decoder path means every recorded trace remains a regression-test input.
-- The MVP carries far less machinery (no two-watermark min-resume, no emergency journal, no iterative catch-up); those are documented and deferred, so turning durability up later is additive.
-- Idempotency (ADR-011) is doing the heavy lifting that durability used to: it makes best-effort re-delivery safe.
+- Keeps up with high-speed CAN: minimal per-frame work, no frame-rate `fsync`, low eMMC wear.
+- Data loss is possible and acknowledged; it degrades evidence and health (ADR-012), never masquerades as healthy.
+- Far less machinery than a zero-loss design; a future lossless/durable tier is a new ADR, made additive by the envelope and identity already in place.
 
 ## Alternatives considered
 
-- **Per-event durable log with checkpointed zero-loss replay (the earlier draft)** — deferred, not adopted for MVP: it protects evidence completeness the MVP does not require while imposing frame-rate `fsync` that threatens eMMC life. Retained as the documented durable-tier upgrade.
-- **Raw frames over IPC, no sequence numbers, health via logs** — rejected: makes loss *silent and unorderable*. We keep the sequence-numbered envelope precisely so best-effort loss stays detectable and ordered.
-- **Unbounded buffer** — rejected: bounded behaviour is a safety property (ADR-013).
+- **Guaranteed zero-loss ingestion** — rejected for MVP: not honestly achievable in-process against a high-speed bus, and imposes frame-rate durability that harms eMMC life. Lossless capture belongs in a dedicated hardware/driver path, considered later.
+- **Silent best-effort (no gap flags)** — rejected: loss must degrade health, never hide.

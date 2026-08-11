@@ -44,20 +44,21 @@ The SocketCAN receive loop must never block on core processing, SQLite, MQTT, HT
 
 The ingestion buffer (ADR-005) is the raw-evidence record; the MVP writes it **best-effort** and does **not** gate IPC on durable persistence (per-frame `fsync` is the dominant eMMC-wear risk and is deliberately avoided). The pipeline is:
 
-1. The **receive loop** assigns the event identity `(session generation, sequence number)` (ADR-004), stamps wall-clock and monotonic receipt time, and places the event into the in-memory ring buffer, from which it is offered to the IPC queue and to the best-effort on-disk log writer. It performs no synchronous durable I/O, so SocketCAN never blocks on storage.
-2. When any bounded queue (IPC or log) is full, or storage cannot keep up, events are dropped. The loop **keeps assigning sequence numbers to dropped events** (it never stops counting), so every loss appears as a **sequence discontinuity**.
-3. The receiver synthesises an **ingestion-gap / ingestion-overflow event** (ADR-004) for exactly the discontinuous range; core records the evidence gap, marks ingestion degraded, and health degrades (ADR-012). Loss is thus **bounded, counted, ordered, and alertable — never silent**, even though it is not prevented.
+1. The **receive loop** assigns the event identity `(session id, sequence number)` (ADR-004), stamps receipt time, and places the event into the ring buffer, from which it is offered to the IPC queue and the best-effort on-disk log writer. It performs no synchronous durable I/O, so SocketCAN never blocks on storage.
+2. When a bounded queue (IPC or log) is full, or storage cannot keep up, events are dropped. The loop keeps assigning sequence numbers, so most loss appears as a **sequence discontinuity**, and IPC-path vs log-path loss are counted separately.
+3. The receiver flags a **gap** (ADR-004); core records it, marks ingestion degraded, and health/data-confidence degrade (ADR-012).
 
-This makes explicitness, not durability, the invariant: the device never presents a gap as healthy data. Turning durability *up* (durable-append-before-IPC, an emergency journal for disk-full, checkpointed zero-loss replay) is the documented durable-tier upgrade in ADR-005, not MVP scope.
+**Not all loss is exactly quantifiable** — a dropped session tail with no following event, frames arriving while `guardian-can` is down, a simultaneous can/core restart, or a gap marker lost on the same saturated path. Gap markers therefore support **open-ended / unknown-extent** ranges, and any gap (even unquantified) degrades health. The MVP does **not** claim every loss is exact or never silent; making gap accounting exhaustive is a later hardening (a new ADR). This keeps explicitness — not durability — the invariant: the device never presents a gap as healthy data.
 
 Rotation and compression run without dropping the live ring: a partially written segment is detectable and skipped on restart, not replayed as valid events.
 
 ### Acceptance criteria (Phase 4)
 
-- Sustained input above nominal Jr 2 frame rate with `guardian-core` stopped: no receive-loop stall; the in-buffer window is delivered on reconnect, and anything beyond the buffer is reported as an explicit gap event — no silent loss.
-- Queue/storage saturation during ingestion: dropped ranges surface as sequence discontinuities → synthesised gap/overflow events; device-health shows degraded; ingestion never stalls.
-- SIGKILL of `guardian-can` during segment rotation: on restart the log opens cleanly, the partial segment is skipped, no corrupt event is replayed, and the discontinuity across the kill is reported as a gap.
-- `guardian-core` restart mid-stream: core resumes live, the in-buffer catch-up replays through the same decoder path, and the un-buffered portion is a marked gap (no zero-loss claim).
+- Sustained input at/above nominal Jr 2 frame rate: the receive loop keeps up with the bus and never stalls; drops (if any) surface as gaps.
+- Queue/storage saturation: dropped ranges surface as gaps (exact where sequence-derivable, open-ended otherwise), IPC vs log loss counted separately; health/data-confidence degrade; ingestion never stalls.
+- Loss the sequence gap cannot quantify (dropped session tail, frames while `guardian-can` down, simultaneous can/core restart): still produces a gap that degrades health — verified by failure injection.
+- SIGKILL of `guardian-can` during rotation: on restart the log opens cleanly, the partial segment is skipped, no corrupt event is replayed, and the discontinuity is reported as a gap.
+- `guardian-core` restart mid-stream: core resumes from the last-seen marker through the same decoder path; the un-buffered portion is a marked gap (no zero-loss claim).
 
 ### IPC
 

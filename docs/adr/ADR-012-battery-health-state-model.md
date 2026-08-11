@@ -28,6 +28,15 @@ Every assembled battery snapshot has exactly one **derived health state**, compu
 - **Decoder failure / unknown schema version** ⇒ `fault`.
 - **Stale-value invalidation:** a value past its freshness bound is treated as missing, not carried forward (data-quality rule); its criticality then drives `degraded` vs `fault`.
 
+### Evidence confidence is a separate axis
+
+Battery-condition state answers "what is the pack doing"; it must not be conflated with "how good is our data right now." A monitoring gap (ADR-003/005) is a *data* problem, not a battery problem, so snapshots carry a distinct **data-confidence** indicator alongside the health state:
+
+- Any ingestion gap **immediately invalidates `healthy`** — a snapshot spanning a gap is at best `degraded`.
+- A gap on a **critical** input, or a **prolonged** gap, follows the missing-critical-input rule ⇒ `fault`.
+- Recovery to `healthy` requires a complete, fresh broadcast cycle after the gap **plus** the normal healthy-state dwell.
+- Consumers must be able to tell "battery looks bad" from "we can't currently see the battery"; the two are never presented as the same thing.
+
 ### Representation and recovery
 
 - **API and MQTT** expose the state as a first-class field alongside the quality metadata that justifies it; a consumer that shows only "healthy/not" must map from this field, and Grafana (ADR-008) visualises it read-only.

@@ -25,7 +25,7 @@ Use **SQLite** for the first edge implementation. SQLite is authoritative locall
 
 Operational state and high-volume telemetry live in **two separate SQLite database files**. This is the accepted topology, not a preference: a single file with independently managed tables is **rejected** here because it reintroduces exactly the cross-writer lock contention that ADR-007 (single writer per database) exists to eliminate, and the implementation plan assumes two files. Each file has exactly one owning writer (ADR-007).
 
-- **Operational DB** — owner: the **operational writer**. Holds configuration, rule/decoder versions, findings, alerts, incidents, outbound delivery state, core's replay checkpoint (ADR-005), evidence-pin references (the pin request IDs and pinned ranges tracked against incidents), and device-health history. All immediate-durability writes land here.
+- **Operational DB** — owner: the **operational writer**. Holds configuration, rule/decoder versions, findings, alerts, incidents, outbound delivery state, core's lightweight last-seen marker (ADR-005; a best-effort resume hint, not a durable zero-loss checkpoint), evidence-pin references, and device-health history. All immediate-durability writes land here.
 - **Telemetry DB** — owner: the **telemetry writer**. Holds normalised telemetry and observations, batched and downsampled under bounded retention.
 
 ### Ownership of ambiguous records
