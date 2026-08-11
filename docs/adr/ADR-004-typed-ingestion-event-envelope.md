@@ -39,7 +39,7 @@ All data crossing the `guardian-can` → `guardian-core` boundary (live IPC and 
 
 A session's identity is a **collision-resistant session id** allocated by `guardian-can` at session start. It is *identity*, not an ordering counter — deliberately not a durable monotonic generation, to avoid a fragile "prove this value exceeds every previous one" recovery path.
 
-- **Construction:** `boot_id` + a per-boot monotonic start nonce (preferred — cheap, and orders sessions within a boot), or a UUIDv7. Collision probability is **negligible, not zero**; if `guardian-core` ever observes the same session id with an inconsistent `boot_id` or origin, it treats them as distinct sessions and raises a data-confidence fault rather than merging them.
+- **Construction:** `boot_id` + a per-boot monotonic start nonce (preferred — cheap, and `boot_id` disambiguates sessions across boots so an id repeated in a different boot is still distinguishable), or a UUIDv7. Collision probability is **negligible, not zero**; a residual same-`boot_id` collision cannot be reliably distinguished, so `guardian-core` **quarantines** the conflicting stream under an ambiguous-session marker and raises a data-confidence fault rather than merging or guessing.
 - **Within a session**, order is the per-session sequence number (assigned at ingestion before buffering); it resets per session and is compared only within one. **Deterministic timeline claims are limited to a single session.**
 - **Across sessions**, order is best-effort by session-start time — monotonic within a boot, wall-clock (at its confidence) across boots. Approximate cross-session/boot ordering is accepted (ADR-005).
 - `boot_id` groups sessions by device boot; `guardian-can` and `guardian-core` restart independently.
@@ -55,7 +55,7 @@ Serialisation: MessagePack (or an equivalent framed binary format). Schema versi
 
 ## Consequences
 
-- Incident timelines can interleave frames, bus health and clock corrections deterministically.
+- Incident timelines interleave frames, bus health and clock corrections deterministically **within a session**; cross-session/boot ordering is best-effort at the stated clock confidence.
 - Replay and live processing share one input format, satisfying ADR-005's single-path rule.
 - Clock adjustments become first-class evidence; timelines spanning an NTP step remain reconstructible using monotonic time.
 - Sequence numbers make most loss detectable as gaps; gaps degrade health (ADR-012). Some loss may be unquantified — an accepted first-cut limitation (ADR-005), not a claim of exactness.
