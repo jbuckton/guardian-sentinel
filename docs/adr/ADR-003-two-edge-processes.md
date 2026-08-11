@@ -48,7 +48,15 @@ The ingestion buffer (ADR-005) is the raw-evidence record; the MVP writes it **b
 2. When a bounded queue (IPC or log) is full, or storage cannot keep up, events are dropped. The loop keeps assigning sequence numbers, so most loss appears as a **sequence discontinuity**, and IPC-path vs log-path loss are counted separately.
 3. The receiver flags a **gap** (ADR-004); core records it, marks ingestion degraded, and health/data-confidence degrade (ADR-012).
 
-**Not all loss is exactly quantifiable** — a dropped session tail with no following event, frames arriving while `guardian-can` is down, a simultaneous can/core restart, or a gap marker lost on the same saturated path. Gap markers therefore support **open-ended / unknown-extent** ranges, and any gap (even unquantified) degrades health. The MVP does **not** claim every loss is exact or never silent; making gap accounting exhaustive is a later hardening (a new ADR). This keeps explicitness — not durability — the invariant: the device never presents a gap as healthy data.
+**Loss is classified, and the invariant is scoped to what is detectable:**
+
+- **Known loss** — a sequence discontinuity or a queue/log drop counter: the range is flagged as a gap (open-ended / unknown-extent markers are supported).
+- **Inferred loss** — `guardian-core` knows the profile's configured broadcasts and their cadence (ADR-010); silence past a configured interval, or an incomplete session (missing session-end), is inferred as a gap even with no discontinuity marker.
+- **Undetectable loss** — e.g. a dropped session tail with nothing after it, or a gap marker lost on the same saturated path — cannot be seen at the time. This is an **honest MVP limitation**, not a claim of completeness.
+
+**Invariant: known or inferred loss never appears healthy** — either forces data-confidence down and invalidates `healthy` (ADR-012). Most silence becomes *inferred* within a broadcast interval, bounding the undetectable case. Explicitness, not durability, is what the device relies on.
+
+**Ownership:** `guardian-can` owns capture and IPC/log drop counters (known loss visible at the source); `guardian-core` owns envelope and expected-broadcast coherence interpretation and the resulting data-confidence state (inferred loss).
 
 Rotation and compression run without dropping the live ring: a partially written segment is detectable and skipped on restart, not replayed as valid events.
 
@@ -56,7 +64,7 @@ Rotation and compression run without dropping the live ring: a partially written
 
 - Sustained input at/above nominal Jr 2 frame rate: the receive loop keeps up with the bus and never stalls; drops (if any) surface as gaps.
 - Queue/storage saturation: dropped ranges surface as gaps (exact where sequence-derivable, open-ended otherwise), IPC vs log loss counted separately; health/data-confidence degrade; ingestion never stalls.
-- Loss the sequence gap cannot quantify (dropped session tail, frames while `guardian-can` down, simultaneous can/core restart): still produces a gap that degrades health — verified by failure injection.
+- **Inferred-loss detection:** with no sequence discontinuity available (dropped session tail, frames while `guardian-can` down, simultaneous can/core restart), core still infers a gap from missing expected broadcasts within their configured interval / incomplete session, and degrades data-confidence — verified by failure injection. Undetectable residual loss is acknowledged, not claimed covered.
 - SIGKILL of `guardian-can` during rotation: on restart the log opens cleanly, the partial segment is skipped, no corrupt event is replayed, and the discontinuity is reported as a gap.
 - `guardian-core` restart mid-stream: core resumes from the last-seen marker through the same decoder path; the un-buffered portion is a marked gap (no zero-loss claim).
 

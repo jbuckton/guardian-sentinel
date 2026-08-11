@@ -17,7 +17,7 @@ Durable decisions for Guardian Sentinel. Each ADR records one decision, its cont
 | [ADR-009](ADR-009-no-actuation-mvp.md) | No actuation in the MVP | Accepted |
 | [ADR-010](ADR-010-installation-profiles.md) | Installation profiles `48-10` (32 cells) and `48-20` (64 cells) | Accepted |
 | [ADR-011](ADR-011-delivery-identity-idempotency.md) | Event identity and best-effort idempotency (first cut) | Accepted |
-| [ADR-012](ADR-012-battery-health-state-model.md) | Explicit battery snapshot health-state model | Accepted |
+| [ADR-012](ADR-012-battery-health-state-model.md) | Battery condition and data confidence as separate axes | Accepted |
 | [ADR-013](ADR-013-storage-quotas-exhaustion-policy.md) | Storage quotas and exhaustion policy | Accepted |
 | [ADR-014](ADR-014-local-operation-independent-of-remote-and-ai.md) | Local operation independent of remote and AI services | Accepted |
 

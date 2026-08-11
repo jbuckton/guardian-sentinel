@@ -37,12 +37,13 @@ All data crossing the `guardian-can` → `guardian-core` boundary (live IPC and 
 
 ### Session identity and ordering
 
-A session's identity is a **collision-resistant session id** (a UUID, or `boot_id` + a start nonce) allocated by `guardian-can` at session start. It is *identity*, not an ordering counter — deliberately not a durable monotonic generation, to avoid a fragile "prove this value exceeds every previous one" recovery path. Because each id is freshly random, it can never collide with a prior session, so a re-read after a restart can never be mistaken for — or suppress — a genuinely new event.
+A session's identity is a **collision-resistant session id** allocated by `guardian-can` at session start. It is *identity*, not an ordering counter — deliberately not a durable monotonic generation, to avoid a fragile "prove this value exceeds every previous one" recovery path.
 
-- **Within a session**, order is the per-session sequence number (assigned at ingestion before buffering); sequence numbers reset per session and are compared only within one.
-- **Across sessions**, order is best-effort by session-start time — monotonic within a boot, wall-clock (at its confidence) across boots. The MVP accepts approximate cross-session ordering, consistent with tolerating missed data (ADR-005).
-- `boot_id` groups sessions by device boot. `guardian-can` and `guardian-core` restart independently; a new `guardian-can` session always reaches core as a session-start record.
-- A session with no session-end record is **incomplete** (crash/power-loss); core marks the boundary as a possible evidence discontinuity.
+- **Construction:** `boot_id` + a per-boot monotonic start nonce (preferred — cheap, and orders sessions within a boot), or a UUIDv7. Collision probability is **negligible, not zero**; if `guardian-core` ever observes the same session id with an inconsistent `boot_id` or origin, it treats them as distinct sessions and raises a data-confidence fault rather than merging them.
+- **Within a session**, order is the per-session sequence number (assigned at ingestion before buffering); it resets per session and is compared only within one. **Deterministic timeline claims are limited to a single session.**
+- **Across sessions**, order is best-effort by session-start time — monotonic within a boot, wall-clock (at its confidence) across boots. Approximate cross-session/boot ordering is accepted (ADR-005).
+- `boot_id` groups sessions by device boot; `guardian-can` and `guardian-core` restart independently.
+- **Best-effort session-start:** the session-start record is not guaranteed to reach core. If core sees an event for an **unknown session** (no session-start received), it **synthesises an implicit, incomplete session boundary, degrades data-confidence (ADR-012), and does not attach the event to any prior session's state.** A session with no session-end record is likewise incomplete (crash/power-loss).
 
 Serialisation: MessagePack (or an equivalent framed binary format). Schema version is bumped on any incompatible change; core must reject unknown versions explicitly rather than guessing.
 

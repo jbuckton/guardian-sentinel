@@ -37,7 +37,7 @@ Profile definitions live in `profiles/` as versioned configuration consumed by `
 
 - A mismatch between profile expectations and observed telemetry (e.g. cell count, broadcast set) is a loud, explicit fault — never silently reconciled.
 - Every assembled battery snapshot records expected cell count, received fresh-cell count, missing/stale cell indices, coherence, quality, and source/decoder version, evaluated against the active profile.
-- Recording this quality metadata is necessary but **not sufficient**: metadata alone does not stop an incomplete snapshot from being reported as healthy. The snapshot's derived health state (`unknown`/`degraded`/`fault`/`healthy`, where `healthy` requires complete and fresh critical inputs) is governed by **ADR-012**; this profile's expectations are one of the inputs to that state machine, and a profile mismatch forces a `fault` state there.
+- Recording this quality metadata is necessary but **not sufficient**: metadata alone does not stop an incomplete snapshot from being reported as healthy. The snapshot's battery-condition and data-confidence axes are governed by **ADR-012**; this profile's expectations are inputs to that model, and a profile mismatch yields `fault(configuration)` (data-confidence), leaving battery condition `unknown` — never a battery fault.
 
 ## Consequences
 
