@@ -15,21 +15,21 @@ The one hard constraint on the edge is keeping up with a high-speed CAN bus: the
 
 - **Tier 0 — CAN stream / telemetry: best-effort, lossy.** Under pressure, frames are dropped. No per-frame `fsync`.
 - **Tier 1 — Incident evidence: best-effort pre-roll.** A RAM pre-roll of recent frames is persisted when core signals a finding; an unlucky crash at incident onset may lose it.
-- **Tier 2 — Operational safety state: durable.** Active alert/incident state, acknowledgements, config, and decoder/profile version are durably written on change (ADR-006). Low-volume, rare — the one thing that must survive a reboot, because forgetting an active alarm is a safety regression.
+- **Tier 2 — Operational safety state: durable + replay-safe.** Active alert/incident state, acknowledgements, config, and decoder/profile version are durably written on change (ADR-006), and Tier-2 transitions carry a **deterministic effect identity** so a restart re-delivery is deduped atomically by the operational writer (ADR-007/011). Low-volume, rare — the one thing that must survive a reboot, because forgetting an active alarm is a safety regression.
 
-### Gaps are flagged best-effort, not proven exact
+### The loss contract (one wording across all documents)
 
-Sequence discontinuity (ADR-004) detects most loss. Some loss cannot be exactly quantified — a dropped session tail with no following event, frames arriving while `guardian-can` is down, a simultaneous can/core restart, or a gap marker lost on the same saturated path. So the MVP:
+**Known or inferred loss degrades data-confidence and can never appear healthy; some loss may remain undetectable in the MVP — an accepted limitation, not a claim of completeness.**
 
-- counts IPC-path and log-path loss separately (best-effort);
-- supports **open-ended / unknown-extent** gap markers, not only exact ranges;
-- treats any gap as an evidence-confidence loss that forces the health state out of `healthy` (ADR-012).
+- **Known** loss: a sequence discontinuity (ADR-004) or a queue/log drop counter.
+- **Inferred** loss: `guardian-core` expects the profile's configured broadcasts at their cadence, so silence past a configured interval or an incomplete session is inferred as a gap even without a discontinuity (ADR-003/012).
+- **Undetectable** loss: e.g. a dropped session tail with nothing after it, or a gap marker lost on the same saturated path — cannot be seen at the time.
 
-We do **not** claim every loss is exactly measured or never silent. Exhaustive gap accounting is a later hardening (a new ADR), not first-cut scope.
+The MVP counts IPC-path and log-path loss separately, supports **open-ended / unknown-extent** gap markers, and treats every known or inferred gap as a data-confidence loss (ADR-012). It does **not** claim every lost frame is detected. Exhaustive gap accounting is a later hardening (a new ADR).
 
 ### Restart & replay
 
-On a `guardian-core` restart, core resumes from a **lightweight last-seen marker** (best-effort, not a durable checkpoint) and re-reads whatever the ring still holds through the **same decoder path** — no separate replay path, so recorded traces stay valid as tests. Anything the ring no longer holds is a gap. Re-reads may re-deliver events; effects tolerate that (ADR-011), but the MVP does not depend on strict idempotency.
+On a `guardian-core` restart, core resumes from a **lightweight last-seen marker** (best-effort, not a durable checkpoint) and re-reads whatever the ring still holds through the **same decoder path** — no separate replay path, so recorded traces stay valid as tests. Data the ring no longer holds is lost; where that loss is known or inferred it becomes a gap that degrades data-confidence, and some may remain undetectable (per the loss contract above). Re-reads may re-deliver events: **Tier-2 safety effects are deduped by deterministic identity and safety outputs are gated until core converges to live** (ADR-011), so replay cannot duplicate a finding or transiently clear an active incident; Tier-0 telemetry duplicates are tolerated.
 
 ### Test-harness role
 
@@ -38,10 +38,10 @@ The envelope format and buffer replay are the Phase 2 trace library and Phase 3 
 ## Consequences
 
 - Keeps up with high-speed CAN: minimal per-frame work, no frame-rate `fsync`, low eMMC wear.
-- Data loss is possible and acknowledged; it degrades evidence and health (ADR-012), never masquerades as healthy.
+- Data loss is possible and acknowledged; known or inferred loss degrades data-confidence and never masquerades as healthy, while some loss may remain undetectable (the loss contract above).
 - Far less machinery than a zero-loss design; a future lossless/durable tier is a new ADR, made additive by the envelope and identity already in place.
 
 ## Alternatives considered
 
 - **Guaranteed zero-loss ingestion** — rejected for MVP: not honestly achievable in-process against a high-speed bus, and imposes frame-rate durability that harms eMMC life. Lossless capture belongs in a dedicated hardware/driver path, considered later.
-- **Silent best-effort (no gap flags)** — rejected: loss must degrade health, never hide.
+- **Silent best-effort (no gap flags)** — rejected: known and inferred loss must degrade data-confidence, not pass as healthy.

@@ -14,6 +14,7 @@ Each SQLite database (ADR-006) has exactly **one owning writer** — a single co
 - All other components, including MQTT delivery, submit state changes as messages/requests through the owning writer's bounded queue rather than writing independently.
 - Reads may occur from other components under WAL, but writes are exclusively the owner's.
 - The owning writer enforces the write discipline of ADR-006: batching for telemetry, immediate durability for alert transitions, findings, bus-off and configuration changes.
+- The operational writer performs **atomic duplicate suppression of Tier-2 safety transitions** by their deterministic effect identity (ADR-011) — a unique-key/insert-or-ignore applied within its single write path — so a restart re-delivery cannot duplicate a finding or reopen an incident. Being the sole writer is what makes this suppression atomic without cross-writer locks.
 - Writer queues are bounded; queue depth and write latency are device-health metrics.
 
 ## Consequences

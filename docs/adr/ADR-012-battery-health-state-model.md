@@ -22,7 +22,13 @@ These are independent: "pack looks bad, data good" and "pack unknown, data bad" 
 
 For a consumer that wants one status, core emits a **conservative summary** (the worse of the two axes) tagged with a **reason domain**: `battery` / `monitoring` / `configuration` / `decoder`. A summary of `fault` therefore always says *why*: `fault(battery)` (a real pack condition on good data) is categorically different from `fault(monitoring)`, `fault(configuration)`, or `fault(decoder)`.
 
-**`healthy`** is asserted **only** when battery condition is `ok` *and* data confidence is `ok` — complete, fresh critical inputs for the active profile, no fault on either axis. Absence of evidence is never `healthy`.
+**Conservative summary — states and precedence.** The summary is one of `healthy` / `degraded` / `fault`, computed by a fixed precedence (worst-wins), each fault carrying its reason domain:
+
+1. **`fault`** if data confidence is `fault` (reason `monitoring`/`configuration`/`decoder`, per cause) **or** battery condition is `fault` (reason `battery`). When both are `fault`, both reasons are reported, `monitoring` first (you cannot trust a battery fault you cannot currently see).
+2. else **`degraded`** if either axis is `degraded`/`concern` (battery `concern` → reason `battery`; data `degraded` → reason `monitoring`).
+3. else **`healthy`** — asserted **only** when battery condition is `ok` *and* data confidence is `ok` (complete, fresh critical inputs, no fault on either axis). Absence of evidence is never `healthy`.
+
+This precedence is the frozen contract the API/MQTT field commits to.
 
 ### Determination (criticality is per-profile config, ADR-010; never hard-coded)
 

@@ -38,7 +38,7 @@ Responsible for:
 
 ### Non-blocking rules
 
-The SocketCAN receive loop must never block on core processing, SQLite, MQTT, HTTP, dashboard access, or Claude/AI services. All downstream paths use bounded queues. If a consumer cannot keep up: record consumer lag; spool to the bounded local log (ADR-005); mark ingestion degraded; count and expose dropped frames; never silently lose evidence.
+The SocketCAN receive loop must never block on core processing, SQLite, MQTT, HTTP, dashboard access, or Claude/AI services. All downstream paths use bounded queues. If a consumer cannot keep up: record consumer lag; spool to the bounded local log (ADR-005); mark ingestion degraded; count and expose dropped frames. Known or inferred loss is surfaced and degrades data-confidence (ADR-012); some loss may remain undetectable in the MVP (the loss contract below).
 
 ### Ingestion path (best-effort with explicit gaps — MVP)
 
