@@ -16,6 +16,16 @@ Best-effort delivery (ADR-005) plus MQTT store-and-forward (ADR-008) means an ev
   - **Telemetry** may be upserted on identity where convenient; occasional duplicate or re-counted telemetry in the first cut is acceptable (the data is lossy anyway) and is tightened later.
 - Exactly-once effect application is **not** guaranteed. Strengthening this (durable de-dup, strictly once-only findings) is a later ADR alongside the durable ingestion tier.
 
+### Known limitation (first cut — deliberately deferred)
+
+A `guardian-core` restart can re-deliver a Tier-2 safety event whose SQLite effect committed **before** the last-seen marker advanced, so across the restart window a **finding may be duplicated or an incident reopened/reclosed**. This is an accepted first-cut limitation, not an oversight:
+
+- it is bounded to the rare restart window and visible (the duplicate is recorded, never silent);
+- it errs toward *more* findings, never a missed detection — it cannot hide a real condition;
+- telemetry duplicates remain explicitly acceptable.
+
+The fix — a deterministic effect id on the low-volume Tier-2 transitions (findings, incident open/close, alert transitions, acks, device-health, safety-relevant outbound) plus atomic duplicate suppression by the single operational writer (ADR-007), **without** exactly-once transport — is a named **later ADR**, deferred to keep the first cut simple. Recorded here so the risk is explicit, not discovered.
+
 ## Consequences
 
 - Simple first cut: dedup where it matters (uplink, alert state), tolerate duplicates elsewhere.

@@ -1,57 +1,52 @@
-# ADR-012: Explicit Battery Snapshot Health-State Model
+# ADR-012: Battery Condition and Data Confidence as Separate Axes
 
 **Status:** Accepted
 **Date:** 2026-08-07
 
 ## Context
 
-A core safety principle is that stale or missing data must never masquerade as a healthy battery (README; data-quality rule in the plan). ADR-010 requires every snapshot to carry quality metadata, but metadata is descriptive: on its own it does not prevent an incomplete or degraded snapshot from being *reported* as healthy by the API, MQTT uplink, or a dashboard. The gap between "we recorded that data was missing" and "we refuse to call this healthy" must be closed by an explicit state machine, not by each consumer's own interpretation of raw quality fields.
+Stale or missing data must never masquerade as a healthy battery (README). But it must equally never masquerade as a *faulty* battery: "we cannot currently see the pack" is a monitoring problem, not a pack condition. ADR-010 records per-snapshot quality metadata, but metadata alone lets each consumer draw its own conclusion, and a single health enum tempts collapsing "missing critical telemetry" into "battery fault." Both failures — calling an unseen pack healthy, and calling it faulty — are wrong.
 
 ## Decision
 
-Every assembled battery snapshot has exactly one **derived health state**, computed by `guardian-core` from the snapshot's quality metadata and the active profile (ADR-010). Consumers render this state; they never re-derive health from raw fields.
+Every assembled snapshot carries **two separately-computed fields**, plus a conservative summary for simple consumers. `guardian-core` computes all three; consumers render them and never re-derive.
 
-### States
+### Two axes
 
-- **`unknown`** — insufficient information to make any health claim (e.g. before a full broadcast cycle has been observed after startup; decoder/profile not yet loaded). The default at startup; never silently upgraded.
-- **`degraded`** — the snapshot is usable but incomplete or partially stale: some non-critical inputs missing/stale, coherence below target, or reduced signal quality. Monitoring continues; the limitation is explicit.
-- **`fault`** — a condition that invalidates health claims: profile/telemetry mismatch (ADR-010), a missing or stale **critical** input, decoder failure, or a stale-value invalidation on a safety-relevant signal.
-- **`healthy`** — asserted **only** when all critical inputs are present and fresh for the active profile, coherence and quality meet thresholds, and no fault condition holds. Absence of evidence is never `healthy`; it is `unknown` or `degraded`.
+- **Battery condition** — what the pack is doing: `unknown` / `ok` / `concern` / `fault`. Asserted **only from sufficient, fresh data**. When critical inputs are missing or stale it is `unknown` — never inferred, and never set to `fault` merely because data is absent.
+- **Data confidence** (monitoring health) — whether we can currently see the pack: `ok` / `degraded` / `fault`. Driven by ingestion gaps (ADR-003/005), staleness, profile/config validity, and decoder health — never by pack values.
 
-`healthy` is the hardest state to reach by construction: it requires positive, fresh, complete evidence — not merely the absence of a raised alarm.
+These are independent: "pack looks bad, data good" and "pack unknown, data bad" are different situations and must never be presented as the same.
 
-### Determination rules
+### Conservative summary + reason domain
 
-- **Critical vs non-critical** inputs are defined per profile configuration (ADR-010), never hard-coded. Missing/stale critical input ⇒ at least `fault`; missing/stale non-critical ⇒ at least `degraded`.
-- **Startup / partial broadcast cycle:** until a complete cycle of the profile's configured broadcasts has been observed, the snapshot is `unknown` (or `degraded` once partial-but-usable), never `healthy`.
-- **Profile mismatch** (cell count, broadcast set, etc.) ⇒ `fault` (ADR-010).
-- **Decoder failure / unknown schema version** ⇒ `fault`.
-- **Stale-value invalidation:** a value past its freshness bound is treated as missing, not carried forward (data-quality rule); its criticality then drives `degraded` vs `fault`.
+For a consumer that wants one status, core emits a **conservative summary** (the worse of the two axes) tagged with a **reason domain**: `battery` / `monitoring` / `configuration` / `decoder`. A summary of `fault` therefore always says *why*: `fault(battery)` (a real pack condition on good data) is categorically different from `fault(monitoring)`, `fault(configuration)`, or `fault(decoder)`.
 
-### Evidence confidence is a separate axis
+**`healthy`** is asserted **only** when battery condition is `ok` *and* data confidence is `ok` — complete, fresh critical inputs for the active profile, no fault on either axis. Absence of evidence is never `healthy`.
 
-Battery-condition state answers "what is the pack doing"; it must not be conflated with "how good is our data right now." A monitoring gap (ADR-003/005) is a *data* problem, not a battery problem, so snapshots carry a distinct **data-confidence** indicator alongside the health state:
+### Determination (criticality is per-profile config, ADR-010; never hard-coded)
 
-- Any ingestion gap **immediately invalidates `healthy`** — a snapshot spanning a gap is at best `degraded`.
-- A gap on a **critical** input, or a **prolonged** gap, follows the missing-critical-input rule ⇒ `fault`.
-- Recovery to `healthy` requires a complete, fresh broadcast cycle after the gap **plus** the normal healthy-state dwell.
-- Consumers must be able to tell "battery looks bad" from "we can't currently see the battery"; the two are never presented as the same thing.
+- Missing/stale **critical** input ⇒ data confidence `fault`, battery condition `unknown`, reason `monitoring` — **not** `fault(battery)`. Missing/stale non-critical ⇒ data confidence `degraded`.
+- **Ingestion gap** ⇒ immediately invalidates `healthy`; a **critical or prolonged** gap ⇒ `fault(monitoring)`, battery condition `unknown`. Recovery to `healthy` needs a complete fresh broadcast cycle plus the healthy-state dwell.
+- **Startup / partial broadcast cycle** ⇒ battery condition `unknown`; never `healthy`.
+- **Profile mismatch** ⇒ `fault(configuration)`; **decoder failure / unknown schema** ⇒ `fault(decoder)`; both leave battery condition `unknown`.
+- **Stale-value invalidation:** a value past its freshness bound is treated as missing, not carried forward.
+- **Real pack conditions** (over/under-voltage, over-temp, imbalance, …) on fresh, sufficient data are the **only** path to battery condition `concern`/`fault(battery)`.
 
 ### Representation and recovery
 
-- **API and MQTT** expose the state as a first-class field alongside the quality metadata that justifies it; a consumer that shows only "healthy/not" must map from this field, and Grafana (ADR-008) visualises it read-only.
-- **Recovery hysteresis:** transitions *toward* `healthy` require the qualifying conditions to hold for a configured dwell time / sample count, to prevent flapping across a marginal boundary; transitions *toward* `fault` are immediate. Hysteresis parameters are profile configuration.
-- The health state is an input to, but distinct from, the alert lifecycle: an alert may be raised on a `fault`, but the snapshot state exists even when no alert rule matches.
+- **API and MQTT** expose both fields and the summary's reason domain; Grafana (ADR-008) visualises them read-only. A consumer showing one light must map from the summary and its domain.
+- **Hysteresis:** transitions toward `healthy` require a configured dwell; transitions toward any `fault` are immediate.
+- The axes feed, but are distinct from, the alert lifecycle: a monitoring fault and a battery fault raise different alerts.
 
 ## Consequences
 
-- "Stale/missing never looks healthy" becomes a testable invariant with a single owner, not a property each consumer must independently uphold.
-- Startup, partial cycles, and decoder/profile failures have defined, conservative states rather than ambiguous ones.
-- The state is evidence-linked (it cites the quality metadata behind it), supporting Phase 6 incident explanations.
-- Rules, API, and uplink all depend on this enum; changing its meaning is a new ADR.
+- "Missing/stale never looks healthy" **and** "cannot-see-the-pack never looks like a pack fault" are both testable invariants with one owner.
+- Operators can distinguish a battery problem from a monitoring problem at a glance, via the reason domain.
+- Rules, API, and uplink depend on these fields; changing their meaning is a new ADR.
 
 ## Alternatives considered
 
-- **Quality metadata only, each consumer decides health** — rejected: guarantees divergent, un-auditable health claims and risks a consumer calling an incomplete snapshot healthy.
-- **Binary healthy/unhealthy** — rejected: collapses `unknown` (no evidence) into a claim, violating the fail-explicitly principle.
-- **Deriving criticality from signal names** — rejected: criticality is a profile/installation fact, not a naming convention (consistent with ADR-010).
+- **One health enum mixing battery and monitoring** — rejected: collapses "unseen" into "faulty" (or "healthy"), the exact confusion this ADR exists to prevent.
+- **Quality metadata only, each consumer decides** — rejected: divergent, un-auditable conclusions.
+- **Deriving criticality from signal names** — rejected: criticality is a profile fact (ADR-010).
