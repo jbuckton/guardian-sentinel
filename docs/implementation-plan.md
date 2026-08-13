@@ -1,8 +1,10 @@
 # Guardian Sentinel — Implementation Plan
 
-**Version:** 0.8
-**Date:** 2026-08-11
+**Version:** 0.9
+**Date:** 2026-08-13
 **Status:** Accepted working plan. Durable decisions live in [ADRs](adr/README.md); this plan references them and does not restate their rationale.
+
+**Changes from v0.8 (ADR-015 integration + ADR/plan reconciliation):** integrated **ADR-015 (broadcast-only acquisition; no diagnostic transmission)** — Phase 2 gains a mandatory **broadcast-coverage verification** (every MVP-required signal must be in the unit's configured broadcasts) and records the configured **OBD2 ECU ID** as an exit criterion; acquisition is described as listen-only/broadcast-only throughout; decision gates **G1** and **G4** now reference ADR-015. The **offline-first local acceptance gate (ADR-014)** is called out as a **distinct Phase-4 sign-off** that must pass before any Phase 5/6 remote or Claude work (it was already in the Phase-4 exit criteria and §1 DoD part A). Restart/resume and tiered-durability wording were already aligned to ADR-005/011 in v0.8 and are unchanged.
 
 **Changes from v0.7 (final-review resolutions — two remaining blockers):** (1) **Tier-2 replay safety** is now solved, not deferred: safety transitions carry a **deterministic effect identity**, the single operational writer applies them with **atomic duplicate suppression**, and safety outputs are **gated until core converges to live** — so a restart cannot duplicate a finding or replay a stale close that transiently clears an active incident (ADR-011/007). No exactly-once transport or durable telemetry. (2) The **loss contract wording is unified** across ADR-003/005/006/014, CLAUDE.md and the plan on one statement: *known or inferred loss degrades data-confidence and can never appear healthy; some loss may remain undetectable in the MVP.* Absolute "never silent / always a gap" claims removed. Non-blocking cleanups: ADR-004 deterministic-timeline claim scoped to within-session and collision-conflict quarantine defined; ADR-012 conservative-summary states/precedence frozen.
 
@@ -67,10 +69,10 @@ A missing or stale cell value remains explicitly missing or stale — never carr
 
 | # | Decision | Status |
 |---|----------|--------|
-| G1 | Product architecture reconciliation (marketing cell-sensing claims vs CAN-gateway reality) | **Open.** ADR-009 sharpens it: MVP outputs are alerts/evidence only; intervention and independent sensing are roadmap. Marketing copy must align. |
+| G1 | Product architecture reconciliation (marketing cell-sensing claims vs CAN-gateway reality) | **Open.** ADR-009 sharpens it: MVP outputs are alerts/evidence only; intervention and independent sensing are roadmap. **ADR-015 sharpens it further:** acquisition is broadcast-only — Guardian reads what the BMS is configured to broadcast and never polls or transmits, so "cell-level sensing" claims must reconcile to broadcast-derived, block-level monitoring. Marketing copy must align. |
 | G2 | First target industry + pilot | **Open.** A *provisional* market hypothesis (stationary storage / industrial) is suggested by the `48-*` profile labels, but per ADR-010 those names are labels only and the configurations are unconfirmed — this inference must not drive commitments until backed by the unit's configuration export or independent pack specifications. Confirm pilot. |
 | G3 | First BMS model | **Resolved — ADR-001:** Orion BMS Jr 2, sole target. |
-| G4 | CAN interface hardware | **Open.** Must support SocketCAN, galvanic isolation, listen-only; validate against the Jr 2's configured bus settings from its configuration export. |
+| G4 | CAN interface hardware | **Open.** Must support SocketCAN, galvanic isolation, listen-only; validate against the Jr 2's configured bus settings from its configuration export. **ADR-015 makes zero-transmission a hard requirement** — the MVP interface need not be transmit-capable, and listen-only enforcement at the controller is a selection criterion. |
 | G5 | Language boundary | **Resolved — ADR-002:** Python for both processes in the MVP. |
 | G6 | Cloud provider + MQTT broker | **Open.** Constraint from ADR-008: broker feeds Guardian's own backend; broker choice must not become the system of record. |
 | G7 | Dashboard technology | **Resolved — ADR-008:** Guardian backend authoritative; Grafana optional visualisation. |
@@ -106,14 +108,15 @@ As v0.1 (eMMC flash, Ethernet/PoE, modem + AU bands + 48 h cellular soak, GNSS d
 
 ### Phase 2 — CAN Capture (1–2 weeks)
 
-- Bring up SocketCAN against the live Orion Jr 2, listen-only
+- Bring up SocketCAN against the live Orion Jr 2, **listen-only, broadcast-only acquisition (ADR-015)** — capture the configured periodic broadcasts; transmit nothing (no OBD2 polling)
 - Record representative sessions (idle, charging, discharging, safely reproducible alarm states) **directly in the ingestion-log event format (ADR-004/005)** so every trace is replayable through the production path
 - Catalogue every recurring CAN ID with frequency and tentative meaning, cross-checked against Jr 2 documentation and the unit's configuration export
 - Capture CAN state-change and error events alongside frames to validate in-band health ordering
+- **Broadcast-coverage verification (ADR-015):** confirm in the Orion Utility that the unit's configured broadcasts cover every MVP-required signal (per-cell voltages, temperatures, pack voltage/current, SoC, status/alarm flags); record the configured **OBD2 ECU ID** so Utility diagnostic traffic (default 0x7E3/0x7EB) is recognised in captures rather than flagged as unknown. A coverage gap is fixed by configuring the broadcast at commissioning — never by adding polling (that would reopen ADR-015)
 - **Measure the actual workload:** nominal and peak frames/second, bus utilisation, and burst shape from the real configured unit — this trace is the Phase 4 load, and the accepted drop budget and gap-detection latency are frozen from it, not invented
 - Populate `traces/` as the versioned trace library
 
-**Exit criteria:** trace library covers all routine operating states of the Jr 2; traces replay cleanly through the envelope decoder; every recurring CAN ID catalogued; **nominal/peak fps, bus utilisation and burst shape recorded** for Phase 4.
+**Exit criteria:** trace library covers all routine operating states of the Jr 2; traces replay cleanly through the envelope decoder; every recurring CAN ID catalogued; **nominal/peak fps, bus utilisation and burst shape recorded** for Phase 4; **broadcast-coverage go/no-go signed off (ADR-015)** — every MVP-required signal present in the configured broadcasts (or a gap explicitly recorded and remediated), and the configured OBD2 ECU ID documented.
 
 ### Phase 3 — Orion Jr 2 Adapter + Normalised Model (2–3 weeks)
 
@@ -139,6 +142,7 @@ As v0.1 (eMMC flash, Ethernet/PoE, modem + AU bands + 48 h cellular soak, GNSS d
 - Deterministic MVP rules (cell over/undervoltage, high temp, temp-rise rate, cell delta/imbalance, pack overcurrent, missing critical message, invalid value, CAN bus-off, storage nearly full, connectivity lost) — thresholds are profile configuration, never hard-coded
 - Alert lifecycle (hysteresis, dedup, escalation, first-occurrence preservation); incident snapshots; device self-health incl. consumer lag, dropped-frame counts, writer queue depth
 - Local REST API + minimal status page
+- **Offline-first local acceptance gate (ADR-014) — distinct sign-off:** exercise the full local runtime with DNS, MQTT, the backend, Grafana, and AI all unreachable from cold boot; local detection, persistence (durable Tier-2), operator visibility, bounded resource isolation, and later recovery must all hold. **This gate must pass before any Phase 5/6 remote or Claude work begins** (it is Definition-of-Done part A, §1).
 
 **Exit criteria:** the receive loop keeps up at the **Phase 2-measured nominal/peak rate** without stalling, with receive-loop latency, CPU/memory, queue high-water marks and SocketCAN/kernel overflow counters recorded and the drop budget + gap-detection latency frozen from that evidence; every MVP rule fires and clears under replay and fault injection; known/inferred loss always degrades data-confidence (never a healthy claim over a gap), undetectable loss acknowledged; core restart mid-incident re-reads the buffered window with **Tier-2 dedup + output-gating verified** (no duplicate finding, no transient clear/reclose of an active incident, no out-of-order safety uplink — ADR-011); known/inferred un-buffered loss degrades data-confidence (undetectable residual acknowledged); Tier-2 safety state survives reboot (active alarm not forgotten); storage exhaustion degrades in the ADR-013 eviction order with the reserve intact; **steady-state disk writes stay bounded with no per-frame `fsync`**; the **offline-first local acceptance gate (ADR-014)** passes with DNS/MQTT/backend/Grafana/AI down from boot; one-week soak with bounded resources and no writer contention.
 

@@ -19,7 +19,7 @@ guardian-sentinel/
 │   ├── implementation-plan.md      # Phased plan with decision gates G1–G7
 │   └── adr/                        # Architecture Decision Records
 │       ├── README.md               # ADR index and template
-│       └── ADR-001 … ADR-010
+│       └── ADR-001 … ADR-015
 ├── edge/
 │   ├── guardian_can/               # (future) SocketCAN ingestion process
 │   └── guardian_core/              # (future) decoding, rules, persistence, uplink
