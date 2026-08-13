@@ -10,7 +10,7 @@ These are accepted, ADR-backed decisions. Do not work around them, and do not "h
 
 1. **Orion BMS Jr 2 only** (ADR-001). It is the sole supported BMS for the MVP. Compatibility with the original Orion BMS Jr is **not** assumed or tested. Build exactly one adapter, `edge/guardian_core/adapters/orion_jr2/`. Do **not** create Jr/Jr2 protocol families or generation-dispatch layers.
 
-2. **No actuation, ever, in the MVP** (ADR-009). CAN integration is strictly **read-only / listen-only** — transmit no frames intended to influence the BMS, chargers, contactors, or any equipment. No hardware control outputs. No AI/Claude tool exposes actuation; diagnostic tooling is read-only. Outputs are alerts, findings, evidence and recommendations only.
+2. **No actuation, ever, in the MVP** (ADR-009), **and broadcast-only acquisition — Guardian transmits nothing on the pack CAN bus** (ADR-015). CAN integration is strictly **read-only / listen-only**: transmit no frames intended to influence the BMS, chargers, contactors, or any equipment (ADR-009), and send no diagnostic frames either — no OBD2 polling, no profile transfer over CAN (ADR-015). No hardware control outputs. No AI/Claude tool exposes actuation; diagnostic tooling is read-only. Outputs are alerts, findings, evidence and recommendations only.
 
 3. **Never invent message definitions** (ADR-001, ADR-010). CAN message definitions, IDs, scaling, units, and broadcast configuration must come from **Orion Jr 2 documentation and the actual deployed unit's configuration export** — never assumed, defaulted, or invented. The same applies to profile fields: do not infer chemistry, topology, thresholds, or thermistor layout from a profile name.
 
@@ -29,7 +29,7 @@ These are accepted, ADR-backed decisions. Do not work around them, and do not "h
 
 Two edge processes on a Raspberry Pi CM4, each a systemd service (ADR-003):
 
-- **`guardian-can`** — SocketCAN ingestion only. Receipt timestamps (wall-clock + monotonic), sequence numbers, session identity, CAN health (error counters, state changes, bus-off, restarts), rolling bounded trace capture, bounded buffering, and forwarding typed events over IPC. Must **not** decode batteries, write to SQLite, publish MQTT, or evaluate rules.
+- **`guardian-can`** — SocketCAN ingestion only. Receipt timestamps (wall-clock + monotonic), sequence numbers, session identity, CAN health (error counters, state changes, bus-off, restarts), rolling bounded trace capture, bounded buffering, and forwarding typed events over IPC. Must **not** decode batteries, write to SQLite, publish MQTT, or evaluate rules. **Acquisition is broadcast-only (ADR-015):** it captures the BMS's configured periodic broadcasts and transmits nothing on the pack bus (no OBD2 polling); BMS profile read/write via Guardian is deferred to a future ADR.
 - **`guardian-core`** — Orion Jr 2 decoding, state assembly + signal quality, deterministic observations/findings, alert/incident lifecycle, SQLite persistence, MQTT delivery, local API, device-health.
 
 **Non-blocking rule:** the SocketCAN receive loop must never block on core, SQLite, MQTT, HTTP, dashboard, or AI services. All downstream paths use bounded queues. On overload: record lag, spool to the bounded log, mark ingestion degraded, count/expose dropped frames — **known or inferred loss is surfaced and degrades data-confidence, never passed off as healthy** (some loss may be undetectable — ADR-005/012).
@@ -68,7 +68,7 @@ profiles/                              # installation profiles 48-10, 48-20 (ver
 traces/                               # versioned CAN trace library (ingestion-log format, replayable)
 docs/
   implementation-plan.md              # phased plan, decision gates G1–G7
-  adr/                                # ADR-001 … ADR-010 + index
+  adr/                                # ADR-001 … ADR-015 + index
 ```
 
 ## Phases (see `docs/implementation-plan.md`)
