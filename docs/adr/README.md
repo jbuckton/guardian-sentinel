@@ -20,6 +20,7 @@ Durable decisions for Guardian Sentinel. Each ADR records one decision, its cont
 | [ADR-012](ADR-012-battery-health-state-model.md) | Battery condition and data confidence as separate axes | Accepted |
 | [ADR-013](ADR-013-storage-quotas-exhaustion-policy.md) | Storage quotas and exhaustion policy | Accepted |
 | [ADR-014](ADR-014-local-operation-independent-of-remote-and-ai.md) | Local operation independent of remote and AI services | Accepted |
+| [ADR-015](ADR-015-broadcast-only-acquisition.md) | Broadcast-only acquisition; no diagnostic transmission in the MVP | Accepted |
 
 ## Template
 
