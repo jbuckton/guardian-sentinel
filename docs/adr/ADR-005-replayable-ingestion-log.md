@@ -1,7 +1,7 @@
 # ADR-005: Best-Effort Bounded Ingestion Buffer with Explicit Gaps
 
 **Status:** Accepted
-**Date:** 2026-08-06
+**Date:** 2026-08-06 (original) · **materially revised 2026-08-11** — the durability stance was reversed during pre-implementation refinement; see **Revision history** at the end.
 
 ## Context
 
@@ -45,3 +45,10 @@ The envelope format and buffer replay are the Phase 2 trace library and Phase 3 
 
 - **Guaranteed zero-loss ingestion** — rejected for MVP: not honestly achievable in-process against a high-speed bus, and imposes frame-rate durability that harms eMMC life. Lossless capture belongs in a dedicated hardware/driver path, considered later.
 - **Silent best-effort (no gap flags)** — rejected: known and inferred loss must degrade data-confidence, not pass as healthy.
+
+## Revision history
+
+Recorded here for transparency, because this ADR's core stance changed after it was first written. Per the working convention (`CLAUDE.md`, `docs/adr/README.md`), a decision is normally superseded by a new ADR rather than edited. The change below was made **in place** because it occurred entirely during the **pre-implementation, pre-merge documentation phase** (no source code and no downstream artifact depended on the original text; the whole ADR set landed as a single baseline in PR #1). Any **future** reversal — once the design is implemented or otherwise relied upon — will be handled by **supersession with a new ADR**, not an in-place edit.
+
+- **2026-08-06 — original.** Title: *"Bounded Replayable Local Ingestion Log with Checkpointed Restart."* Specified a **durable processed checkpoint** (session id + sequence) recorded in the operational DB, replay-after-checkpoint on `guardian-core` restart, and framed evidence as **not lost within log bounds**.
+- **2026-08-11 — reversal of the durability stance (pre-implementation refinement).** Retitled to the best-effort model. The **durable checkpoint became a lightweight, best-effort last-seen marker**; **Tier 0 (CAN stream/telemetry) is now explicitly lossy**; the loss guarantee was replaced by the *loss contract* (known / inferred / undetectable) and the tiered-durability model (Tier 1 best-effort pre-roll, Tier 2 durable safety state). **Rationale:** an in-process service on the CM4 cannot honestly guarantee zero loss against a high-speed CAN bus, and per-frame `fsync` is the dominant eMMC-wear risk; safety is preserved by **explicitness** — a gap degrades data-confidence and never reads as healthy (ADR-012) — rather than by durability. A future lossless/durable tier remains a **new-ADR** option, made additive by the envelope + identity already defined (ADR-004).
