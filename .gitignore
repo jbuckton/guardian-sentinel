@@ -206,6 +206,11 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Local remote-access enrollment secrets (never ship with general documentation)
+/.private/
+/output/gs-onsite-setup/enrollment-key.txt
+/output/gs-onsite-setup.zip
+
 # PyPI configuration file
 .pypirc
 
@@ -216,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CAN trace captures are first-class evidence (traces/FORMAT.md) — keep them tracked
+# despite the global *.log rule above.
+!traces/**/*.log

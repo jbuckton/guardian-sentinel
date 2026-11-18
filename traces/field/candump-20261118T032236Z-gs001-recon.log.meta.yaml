@@ -1,0 +1,40 @@
+schema_version: 1
+capture: candump-20261118T032236Z-gs001-recon.log
+captured_at_utc: "2026-11-18T03:22:36Z"
+
+# PROVENANCE — READ THIS FIRST
+# This is a READ-ONLY RECON capture, not a compliant Phase-2 field trace.
+# It was taken remotely over SSH while nobody was onsite. The pack facts below
+# are UNCONFIRMED: per ADR-010 they must come from the pack designer and the
+# unit's Orion Jr 2 configuration export (data-collection.md Part B), which has
+# not been done. Do not treat any value marked "unconfirmed" as truth, and do
+# not infer cell count / topology from this capture (ADR-010, hard-constraint 3).
+
+capture_class: recon            # NOT a compliant field trace
+pack_id: unconfirmed
+pack_model: unconfirmed         # 48-10 / 48-20 not confirmed from config export
+designer_confirmed_cell_count: unconfirmed
+orion_jr2_serial: unconfirmed
+can_node_id: unconfirmed
+obd2_ecu_id: unconfirmed
+thermistors: unconfirmed
+state: unconfirmed              # operating state not characterised at capture time
+bitrate: 500000                 # observed interface bitrate (ip -details)
+interface: can0
+hardware: "Raspberry Pi CM4 (mcp251x SPI CAN); isolation/listen-only hardware per G4 unconfirmed"
+listen_only_confirmed: false    # IMPORTANT: can0 was UP in NORMAL mode, not listen-only, during capture
+utility_connected: unconfirmed
+capture_duration_seconds: 60
+ntp_synchronised: unconfirmed
+operator: "remote (Claude Code session, read-only candump only)"
+can_stats_before: candump-20261118T032236Z-gs001-recon.can-stats-before.txt
+can_stats_after: candump-20261118T032236Z-gs001-recon.can-stats-after.txt
+notes: >
+  Read-only candump only; no frames transmitted by this capture. Interface was
+  observed in NORMAL (non-listen-only) mode with a non-zero historical TX counter
+  (724 frames) attributable to prior interactive `admin` sessions — see
+  gs-001 audit notes. The repo capture filter `0~0,#FFFFFFFF` used by
+  collect_can_trace.sh and data-collection.md Option B is an INVERTED filter that
+  matches nothing and yields EMPTY logs; this capture used `candump -L can0`
+  instead. Catalogue of IDs/rates/DLCs is in CATALOGUE.md (Stage-0 cataloguing is
+  permitted per traces/FORMAT.md; no physical meaning/scaling assigned — awaits DBC).
