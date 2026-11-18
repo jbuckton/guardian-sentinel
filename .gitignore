@@ -225,3 +225,9 @@ __marimo__/
 # CAN trace captures are first-class evidence (traces/FORMAT.md) — keep them tracked
 # despite the global *.log rule above.
 !traces/**/*.log
+
+# macOS Finder metadata
+.DS_Store
+
+# Local scratch / build staging (PDF renders, intermediate scripts) — not shipped
+/tmp/

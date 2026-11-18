@@ -1,0 +1,16 @@
+{"seq":1,"mode":"0x03","desc":"confirmed DTCs","tx_id":"0x7E3","tx":"01 03","rx_id":"0x7EB","rx":["02 43 00 00 00 00 00 00"],"decode":{"resp":"0x43","dtc_count":0}}
+{"seq":2,"mode":"0x07","desc":"pending DTCs","tx_id":"0x7E3","tx":"01 07","rx_id":"0x7EB","rx":["04 47 01 0A 09 00 00 00"],"decode":{"resp":"0x47","dtc_count":1,"dtc":"P0A09"}}
+{"seq":3,"mode":"0x0A","desc":"permanent DTCs","tx_id":"0x7E3","tx":"01 0A","rx_id":"0x7EB","rx":["04 4A 01 0A 09 00 00 00"],"decode":{"resp":"0x4A","dtc_count":1,"dtc":"P0A09"}}
+{"seq":4,"mode":"0x02","desc":"freeze frame PID 00","tx_id":"0x7E3","tx":"02 00 00","rx_id":"0x7EB","rx":["10 08 42 00 C0 00 00 13","21 00 00 00 00 00 00 00"],"decode":{"resp":"0x42","payload":"42 00 C0 00 00 13 00 00","note":"stubbed: identical for every PID walked (00,01,02,1C,1F,20)"}}
+{"seq":5,"mode":"0x22","desc":"SoC (F00F)","tx_id":"0x7E3","tx":"22 F0 0F","rx_id":"0x7EB","rx":["04 62 F0 0F 62 00 00 00"],"decode":{"resp":"0x62","pid":"F00F","raw":"0x62","value":"~49% (x0.5, provisional)"}}
+{"seq":6,"mode":"0x22","desc":"cells 1-12 (F100)","tx_id":"0x7E3","tx":"22 F1 00","rx_id":"0x7EB","rx":["10 1B 62 F1 00 7C 74 7C","21 67 7C 67 7C 6A 00 00","22 00 00 00 00 00 00 1B","23 C0 20 5D 13 28 0C 63"],"decode":{"resp":"0x62","pid":"F100","note":"24-byte cell block; scaling per published PID map (provisional)"}}
+{"seq":7,"mode":"0x22","desc":"F00D","tx_id":"0x7E3","tx":"22 F0 0D","rx_id":"0x7EB","rx":["05 62 F0 0D 00 7F 00 00"],"decode":{"resp":"0x62","pid":"F00D","raw":"0x7F"}}
+{"seq":8,"mode":"0x21","desc":"extended supported PIDs","tx_id":"0x7E3","tx":"21 00 00","rx_id":"0x7EB","rx":["06 61 00 C0 00 00 13 00"],"decode":{"resp":"0x61","bitmask":"C0 00 00 13","pids":["01","02","1C","1F","20"]}}
+{"seq":9,"mode":"0x21","desc":"PID 01","tx_id":"0x7E3","tx":"21 01 00","rx_id":"0x7EB","rx":["03 61 01 81 00 00 00 00"],"decode":{"resp":"0x61","pid":"01","raw":"0x81"}}
+{"seq":10,"mode":"0x21","desc":"PID 02","tx_id":"0x7E3","tx":"21 02 00","rx_id":"0x7EB","rx":["04 61 02 81 00 00 00 00"],"decode":{"resp":"0x61","pid":"02","raw":"0x8100"}}
+{"seq":11,"mode":"0x21","desc":"PID 1C","tx_id":"0x7E3","tx":"21 1C 00","rx_id":"0x7EB","rx":["03 61 1C 01 00 00 00 00"],"decode":{"resp":"0x61","pid":"1C","raw":"0x01"}}
+{"seq":12,"mode":"0x21","desc":"PID 1F","tx_id":"0x7E3","tx":"21 1F 00","rx_id":"0x7EB","rx":["04 61 1F 6B 99 00 00 00"],"decode":{"resp":"0x61","pid":"1F","raw":"0x6B99"}}
+{"seq":13,"mode":"0x21","desc":"PID 20","tx_id":"0x7E3","tx":"21 20 00","rx_id":"0x7EB","rx":["06 61 20 00 00 00 01 00"],"decode":{"resp":"0x61","pid":"20","note":"next-bank bitmask"}}
+{"seq":14,"mode":"0xB2","desc":"proprietary probe","tx_id":"0x7E3","tx":"B2 00 00","rx_id":"0x7EB","rx":["03 7F B2 12 00 00 00 00"],"decode":{"negative":true,"nrc":"0x12","nrc_meaning":"subFunctionNotSupported"}}
+{"seq":15,"mode":"0x17","desc":"bare subfunction 0","tx_id":"0x7E3","tx":"17 00","rx_id":"0x7EB","rx":["03 7F 17 12 00 00 00 00"],"decode":{"negative":true,"nrc":"0x12"}}
+{"seq":16,"mode":"0x17","desc":"DTC P0A09 detail","tx_id":"0x7E3","tx":"17 0A 09","rx_id":"0x7EB","rx":["10 0A 57 0A 09 0E 80 08","21 00 00 00 00 00 00 00"],"decode":{"resp":"0x57","dtc":"P0A09","status_mask":"0x0E","status_bits":["testFailedThisCycle","pending","confirmed"],"inf":"0x8008","note":"sub-record byte ignored; same record for 00/01/02/FF"}}
