@@ -27,7 +27,11 @@ findings:
   p0a09_confirmed_at_probe_time: false  # Mode 0x03 count 0
   dtc_status_mask: "0x0E"
   inf: "0x8008"                          # matches reported "INF 8008"
-  sub_code_1_resolved: false             # not literally present over CAN; reconcile with Utility
+  inf_8008_meaning: "internal watchdog redundancy fault (Orion P0A09 subcode 8008/8010); documented to occur when no cells are enabled/loaded in the battery profile"
+  inf_8008_reason_domain: configuration  # ADR-012: fault(configuration), NOT fault(battery)
+  inf_8008_prescribed_check: "cell count in profile configuration (Orion)"
+  inf_8008_source: "https://www.orionbms.com/faultcodes/DTC%20P0A09%20-%20Internal%20Hardware%20Fault.pdf"
+  sub_code_1_resolved: false             # not literally present over CAN; likely Utility occurrence index — reconcile with Utility
   mode_02_freeze_frame: stubbed
   mode_17_dtc_detail: works
   mode_21_extended_data: works

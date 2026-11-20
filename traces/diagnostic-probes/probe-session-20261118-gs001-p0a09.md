@@ -18,8 +18,42 @@
 |---|---|
 | Is P0A09 present? | **Yes** — pending (Mode 07) **and** permanent (Mode 0A); not in confirmed list (Mode 03) at probe time |
 | DTC status mask | `0x0E` = failed-this-cycle + pending + confirmed |
-| **INF value** | **`0x8008`** (matches the reported "INF 8008") |
-| "sub code 1" | **Not** literally present over CAN; the byte in that position (`0x0E`) decodes as a DTC **status mask**, not a subcode. Subcode may be Utility-side or inside INF — unresolved |
+| **INF value** | **`0x8008`** (matches the reported "INF 8008") — see root cause below |
+| "sub code 1" | **Not** literally present over CAN; the byte in that position (`0x0E`) decodes as a DTC **status mask**, not a subcode. Most likely a Utility-side occurrence/instance index; the substantive detail is the `0x8008` INF — confirm against the Utility |
+
+## Root cause (from Orion documentation, 2026-11-20)
+
+Per Orion's own P0A09 fault documentation, INF/subcode **`8008`** (with sibling
+`8010`) = **internal watchdog redundancy fault**, which Orion documents as
+occurring **when no cells are enabled (loaded) in the battery profile settings**.
+Orion's prescribed check is the **cell count in the profile configuration**.
+
+Interpretation for GS-001:
+
+- This is a **configuration** condition, **not** a damaged pack — it maps to
+  ADR-012 `fault(configuration)`, never `fault(battery)`.
+- Fits the current project state: GS-001's cell population is still
+  **unconfirmed** (ADR-010) and the Jr 2 config export is not yet reconciled.
+  A unit powered without a fully loaded/validated profile is the expected
+  trigger for `8008`.
+- Weakly corroborated by the probe's `F100` cell read (seq 6): only a few
+  non-zero cell values then zeros, i.e. a sparse/partial population — but the
+  scaling is reverse-engineered (ADR-001/010), so this is a hint, not proof.
+
+Still open / Utility-only:
+
+- **Failsafe behaviour of `8008`** not confirmed from text (P0A09 overall shows
+  "No Failsafe Behavior" but subcode exceptions were cut off).
+- The **freeze frame** (real parameter snapshot at fault time) lives only in the
+  Orion Utility DTC screen, not on CAN — save it before clearing anything.
+
+Sources:
+- Orion — DTC P0A09 Internal Hardware Fault:
+  https://www.orionbms.com/faultcodes/DTC%20P0A09%20-%20Internal%20Hardware%20Fault.pdf
+- Orion Jr 2 Utility manual — Internal Memory Fault (P0A09):
+  https://www.orionbms.com/manuals/utility_jr/code_internal_memory_fault.html
+- Orion Jr 2 Utility manual — Freeze Frame Data:
+  https://orionbms.com/manuals/utility_jr/acc_freeze_frame.html
 | Standard freeze frame (Mode 0x02) | Acknowledges but **stubbed** — returns identical `42 <pid> C0 00 00 13` for every PID; no real per-PID payload |
 | Full environmental snapshot (cell-V/temp/current at fault time) | **Not** retrieved over CAN; appears Utility-proprietary |
 | Live telemetry (Mode 0x22) | **Works** — real decoded values (e.g. SoC) |
