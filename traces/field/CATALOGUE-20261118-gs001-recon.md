@@ -41,6 +41,9 @@ against the config export, **not** a finding.
   pending the designer + Orion Utility export (Part B, onsite).
 - **Coverage incomplete:** one steady-state window only; no charging/discharging/alarm/boot
   states, so broadcast-coverage sign-off (Phase 2 exit / ADR-015) is **not** met by this capture.
-- **Tooling bug found:** the `0~0,#FFFFFFFF` filter in `collect_can_trace.sh` and
-  `data-collection.md` Option B is inverted and captures **nothing**; must be fixed before a
-  recorded capture or every trace will be empty.
+- **Tooling bug (FIXED 2026-11-20):** the `0~0,#FFFFFFFF` filter in `collect_can_trace.sh`
+  and `data-collection.md` Option B was inverted (matches nothing → empty logs). The correct
+  match-all is `0:0,#FFFFFFFF`. Repo script + runbook were corrected in commit 872b43c; the
+  emailed bundle `output/email/guardian-sentinel-data-collection.zip` was a stale pre-fix copy
+  and was rebuilt 2026-11-20 with the corrected script (prior copy kept as `*.bak-preFix`).
+  Any onsite copy unzipped before then must be re-fetched.
