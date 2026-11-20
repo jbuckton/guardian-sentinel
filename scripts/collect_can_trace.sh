@@ -138,13 +138,27 @@ stats_after_path="$output_dir/${base_name}.can-stats-after.txt"
 printf '\nConfiguring %s at %s bit/s in listen-only mode...\n' "$can_interface" "$bitrate"
 run_privileged ip link set "$can_interface" down 2>/dev/null || true
 run_privileged ip link set "$can_interface" type can bitrate "$bitrate" listen-only on
+
+# Error-frame (bus-error) reporting is optional and controller-dependent. Record the
+# actual result so the sidecar states whether in-band CAN error frames were captured,
+# rather than silently omitting error events from the trace.
+error_frame_reporting=true
 if ! run_privileged ip link set "$can_interface" type can berr-reporting on; then
-  printf 'Warning: %s does not support CAN error-frame reporting; continuing in listen-only mode.\n' "$can_interface" >&2
+  printf 'Warning: %s does not support CAN error-frame reporting; this capture will NOT include in-band CAN error frames.\n' "$can_interface" >&2
+  error_frame_reporting=false
 fi
 run_privileged ip link set "$can_interface" up
 
+# Confirm listen-only from the interface state itself; never assume it. Capture is
+# refused unless the controller actually reports LISTEN-ONLY, and the recorded value
+# is derived from that check (not hard-coded).
 interface_details=$(ip -details link show "$can_interface")
-if ! grep -Eiq 'listen-only|LISTEN-ONLY' <<<"$interface_details"; then
+if grep -Eiq 'listen-only' <<<"$interface_details"; then
+  listen_only_confirmed=true
+else
+  listen_only_confirmed=false
+fi
+if [[ $listen_only_confirmed != true ]]; then
   printf 'Refusing to capture: %s did not report listen-only mode.\n' "$can_interface" >&2
   run_privileged ip link set "$can_interface" down || true
   exit 1
@@ -188,7 +202,8 @@ utility_connected_yaml=false
   printf 'bitrate: %s\n' "$bitrate"
   printf 'interface: %s\n' "$(yaml_quote "$can_interface")"
   printf 'hardware: %s\n' "$(yaml_quote "$capture_hardware")"
-  printf 'listen_only_confirmed: true\n'
+  printf 'listen_only_confirmed: %s\n' "$listen_only_confirmed"
+  printf 'error_frame_reporting: %s\n' "$error_frame_reporting"
   printf 'utility_connected: %s\n' "$utility_connected_yaml"
   printf 'capture_duration_seconds: %s\n' "$duration_seconds"
   printf 'ntp_synchronised: %s\n' "$(yaml_quote "$ntp_synchronised")"
