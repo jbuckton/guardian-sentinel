@@ -10,15 +10,31 @@ The immediate, zero-code format: can-utils log files from [`docs/runbooks/data-c
 - Each log has a sidecar `*.meta.yaml`:
 
 ```yaml
-capture: candump-2026-08-11_141530.log
-unit_ids: [A]           # per SOURCING.md; list all if multi-unit
-node_ids: ["0x18FF50E5"] # observed / expected, if known
-state: charging          # idle | charging | discharging | alarm | boot
+schema_version: 1
+capture: candump-2026-11-03T141530Z-pack-01-charging.log
+captured_at_utc: "2026-11-03T14:15:30Z"
+pack_id: pack-01
+pack_model: 48-10
+designer_confirmed_cell_count: 32
+orion_jr2_serial: "JR2-12345"
+can_node_id: "0x01"
+obd2_ecu_id: unknown
+thermistors: "10; locations supplied by pack designer"
+state: charging          # startup | idle | charging | discharging | alarm
 bitrate: 500000
-hardware: "Pi CM4 + <CAN interface>, listen-only"
-operator: "<name>"
-notes: "SoC ~60%, 10A charge; error counters pasted below"
+interface: can0
+hardware: "Raspberry Pi CM4 + Waveshare CM4 PoE 4G carrier + <CAN adapter>"
+listen_only_confirmed: true
+utility_connected: false
+capture_duration_seconds: 180
+ntp_synchronised: "yes"
+operator: "Sam"
+can_stats_before: candump-2026-11-03T141530Z-pack-01-charging.can-stats-before.txt
+can_stats_after: candump-2026-11-03T141530Z-pack-01-charging.can-stats-after.txt
+notes: "Approximately 60% SoC; charging normally"
 ```
+
+The preferred way to create this file is [`scripts/collect_can_trace.sh`](../scripts/collect_can_trace.sh); manual editing is only the fallback.
 
 These logs are **evidence and test input**, never edited. They are not decoded in the field (ADR-001/010: no invented scaling).
 

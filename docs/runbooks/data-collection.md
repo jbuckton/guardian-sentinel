@@ -1,49 +1,101 @@
-# Runbook / Hand-over Task: Orion Jr 2 Data Collection
+# Orion Jr 2 Data Collection
 
-**Purpose:** collect the two inputs Guardian Sentinel is blocked on — (A) a **raw CAN capture** of the deployed Orion BMS Jr 2 in its normal operating states, and (B) the unit's **configuration export + DBC** from the Orion BMS Utility.
-**Who does this:** field / integration engineer with physical access to the pack and the Orion CANdapter.
-**Time:** ~half a day on site (capture windows depend on getting the pack through its states).
-**Golden rule — read-only:** the Guardian capture interface is **listen-only**; never transmit on the pack's CAN bus. Reading/exporting config with the Orion Utility is fine, but **do not write or change any BMS setting.** **Never unlock the BMS over CAN from any tool other than the Orion Utility, and never automate it:** unlocking stops all normal CAN broadcasts and **disengages every BMS-controlled relay** until re-lock/restart (see ADR-015). Note the Utility's own connection uses OBD2 polling — expect its diagnostic request/response traffic (default 0x7E3/0x7EB) to appear in any capture taken while the Utility is connected; annotate those windows in the meta sidecar.
+**Purpose:** collect (A) raw CAN captures of the deployed Orion BMS Jr 2 in its normal operating states and (B) the unit's configuration export and DBC from the Orion BMS Utility.
 
-**Coverage check before leaving site (ADR-015):** in the Utility, confirm the unit's **configured periodic broadcasts** cover every signal the MVP rules need (per-cell voltages, temperatures, pack voltage/current, SoC, status/alarm flags). Guardian is broadcast-only — anything not broadcast is invisible to it. Record the configured **OBD2 ECU ID** as well (it is profile-configurable).
+**Who does this:** someone with physical access to the pack, the CAN capture equipment, and the Orion CANdapter.
 
-Related docs: what the data feeds and why → [`profiles/SOURCING.md`](../../profiles/SOURCING.md); capture file format → [`traces/FORMAT.md`](../../traces/FORMAT.md); decisions → [`docs/adr/`](../adr/README.md) (esp. ADR-001, ADR-010).
+**Allow approximately half a day:** the actual time depends on how quickly the pack can be put through its normal operating states.
+
+## Safety rules
+
+- The capture interface must be **listen-only**. Never transmit onto the pack's CAN bus.
+- Do not use `cansend` or `canplayer` on the live pack bus.
+- Use the Orion Utility only to read and export the existing configuration. **Do not write or change any BMS setting.**
+- Do not unlock the BMS or automate access to it.
+- Prefer to take CAN captures while the Orion Utility is disconnected. If it is connected, record that in the capture notes because its diagnostic traffic will also appear in the log.
 
 ---
 
 ## Prerequisites
 
 - A Linux machine (the Raspberry Pi, or any laptop) with **can-utils**: `sudo apt install can-utils`
-- A **listen-only-capable CAN interface** wired to the pack's CAN bus (isolated tap — decision gate G4). *No* transmit.
+- A **listen-only-capable CAN interface** wired to the pack's CAN bus. *No transmit.*
 - The Orion **CANdapter** (USB↔CAN) and the **Orion Jr 2 Utility** ([Windows](https://www.orionbms.com/downloads/orionjr2_utility_stable.exe) / [Linux](https://www.orionbms.com/downloads/orionjr2_utility_stable.zip)) for Part B.
 - Known **CAN baud rate** (Jr 2 default **500 kbps**; confirm — if frames don't appear, try 250k / 125k / 1M).
-- **Answer these before you start** (from the integrator): how many Jr 2 units are on this pack, and what are their CAN node IDs? (The spec sheet lists ~16 cells/unit, so a 32- or 64-cell pack likely means **multiple units** — capture each.)
+- **Confirm before you start:** the pack designer must provide the pack's cell count. Record that confirmed count, the pack model (`48-10` or `48-20`), and the CAN node ID of the pack's single Orion Jr 2. Do not infer the cell count from captured traffic or the profile name.
 
 ---
 
 ## Part A — Raw CAN capture (no decoding needed)
 
-We capture *everything* raw now; decoding happens later once the DBC (Part B) is in hand. Do **not** interpret values in the field.
+Capture everything raw. Do **not** interpret or alter the data in the field.
 
-### 1. Bring up the interface, listen-only
+### Choose one capture method
 
-```bash
-sudo ip link set can0 type can bitrate 500000 listen-only on
-sudo ip link set can0 up
-ip -details link show can0        # confirm "LISTEN-ONLY" and bitrate 500000
-```
+Use **Option A** when the capture script is available. Use **Option B** only as the manual fallback. Do not perform both options for the same session.
 
-If the controller doesn't support `listen-only`, bring it up without that flag **but transmit nothing** (never run `cansend`/`canplayer` on the live bus).
+#### Option A — Capture with the script (preferred)
 
-### 2. Record a session per operating state
+1. On the capture computer, confirm `ip`, `candump`, and `timeout` are installed, root access is available (normally through `sudo`), and the listen-only-capable CAN interface is connected.
+2. From the repository root, run:
 
-Run one capture per state so they're separable. `candump -l` writes a timestamped, replayable log file (`candump-YYYY-MM-DD_HHMMSS.log`):
+   ```bash
+   ./scripts/collect_can_trace.sh
+   ```
 
-```bash
-candump -l can0                   # Ctrl-C to stop; note the filename it prints
-```
+3. Answer the prompts and leave the capture running for the requested duration. The script configures `can0` in listen-only mode, refuses to continue if listen-only is not reported, captures data frames (and error frames when supported), records before/after interface counters, and writes the `.meta.yaml` sidecar.
+4. Repeat the script for each applicable operating state in the shared list below.
 
-Capture, ideally 2–5 min each (longer for slow broadcasts):
+#### Option B — Capture manually
+
+1. Configure the interface and confirm that it reports `LISTEN-ONLY` and the expected bitrate:
+
+   ```bash
+   sudo ip link set can0 down
+   sudo ip link set can0 type can bitrate 500000 listen-only on berr-reporting on
+   sudo ip link set can0 up
+   ip -details link show can0
+   ```
+
+   If the controller does not support listen-only mode, stop and use the approved listen-only-capable interface.
+
+2. Save the interface statistics before the capture:
+
+   ```bash
+   ip -details -statistics link show can0
+   ```
+
+3. Record one 2–5 minute session for the selected operating state. Use a longer session if broadcasts are slow. Press `Ctrl-C` to stop and note the filename printed by `candump`:
+
+   ```bash
+   candump -l 'can0,0:0,#FFFFFFFF'
+   ```
+
+   If the interface does not support error-frame reporting, record that limitation and use `candump -l can0` instead.
+
+4. Save the interface statistics again after the capture:
+
+   ```bash
+   ip -details -statistics link show can0
+   ```
+
+5. Create `<capture-name>.log.meta.yaml` and record:
+
+   - pack identifier and model
+   - designer-confirmed cell count
+   - Orion Jr 2 serial number and CAN node ID
+   - OBD2 ECU ID and thermistor details, if known
+   - operating state
+   - capture date, time, duration, and whether the computer clock was synchronised
+   - CAN bitrate, interface, and capture hardware
+   - confirmation that listen-only mode was active
+   - whether the Orion Utility was connected
+   - operator name and any relevant notes
+   - filenames of the before/after interface statistics
+
+6. Repeat these steps for each applicable operating state in the shared list below.
+
+### Operating states to collect with either option
 
 - [ ] **idle / rest** (contactors closed, no current)
 - [ ] **charging**
@@ -51,53 +103,31 @@ Capture, ideally 2–5 min each (longer for slow broadcasts):
 - [ ] **any safely reproducible alarm/fault** state (e.g. a benign warning) — do **not** force unsafe conditions
 - [ ] **power-up / boot** of the BMS if you can catch it
 
-To also capture CAN **error frames** and bus health in the same log, add the error mask and enable reporting (verify against `man candump` for your can-utils version):
-
-```bash
-sudo ip link set can0 type can bitrate 500000 listen-only on berr-reporting on
-candump -l 'can0,0~0,#FFFFFFFF'   # data frames + error frames
-```
-
-Snapshot the interface error counters a few times per session:
-
-```bash
-ip -details -statistics link show can0
-```
-
-### 3. Write a metadata sidecar per capture
-
-Next to each `.log`, save `<same-name>.meta.yaml` (template in [`traces/FORMAT.md`](../../traces/FORMAT.md)): date/time, unit(s) + node IDs, operating state, bitrate, capture hardware, and free-text notes (what the pack was doing, anything unusual).
-
 > Do **not** replay these logs onto the live pack bus. `canplayer` transmits — it's for later bench/loopback use only.
 
 ---
 
-## Part B — Configuration export + DBC (per unit)
+## Part B — Configuration export + DBC (one Jr 2 per pack)
 
-This is the authoritative source of every message ID, scaling, and the real cell/thermistor layout (ADR-010). **Read/export only.**
+The export provides the message IDs, scaling, and configured cell and thermistor layout. **Read/export only.**
 
 1. Connect the **CANdapter** (USB) to the laptop and to the CAN bus; set the Utility's baud to match the BMS.
 2. Open the **Orion Jr 2 Utility**, connect to the unit, and **read** its current configuration.
-3. **Export the CAN communication matrix as a DBC file.** (There is no standard matrix — the export is the only source of truth; see [Viewing the CANBUS Communication Matrix](https://www.orionbms.com/downloads/misc/viewing_canbus_communication_matrix.pdf) and [Editing Custom CANBUS Messages](https://www.orionbms.com/downloads/misc/editing_canbus_messages.pdf).)
+3. **Export the CAN communication matrix as a DBC file.** The configured matrix may differ between units, so use the export from this BMS.
 4. **Save the full profile/settings file** for the unit.
 5. Record the **firmware version** shown in the Utility.
-6. **Repeat for every Jr 2 unit** on the pack.
-
-Reference manuals: [Wiring & Installation](https://www.orionbms.com/manuals/pdf/jr2_wiring_manual.pdf), [Operation](https://www.orionbms.com/manuals/pdf/jr2_operational_manual.pdf), [Spec sheet](https://www.orionbms.com/downloads/documents/orionjr2_specifications.pdf).
+6. Confirm the export belongs to the pack's single Orion Jr 2 and label it with the pack identifier/model.
+7. Record which configured periodic broadcasts contain per-cell voltages, temperatures, pack voltage/current, state of charge, and status/alarm flags. Also record the configured OBD2 ECU ID.
 
 ---
 
 ## Deliverables (hand back)
 
-- [ ] `*.dbc` — CAN communication matrix export, **one per unit**
-- [ ] Orion **profile/settings** file, one per unit
-- [ ] **Firmware version** of each unit
+- [ ] `*.dbc` — CAN communication matrix export for the pack's Orion Jr 2
+- [ ] Orion **profile/settings** file for the pack's Orion Jr 2
+- [ ] **Firmware version** of the Orion Jr 2
 - [ ] `candump-*.log` files + their `*.meta.yaml` sidecars, covering the states above
-- [ ] `ip -s link` counter snapshots (paste into the session notes)
+- [ ] Before/after CAN interface statistics for each capture
 - [ ] Photos of the unit label(s) and CAN wiring/tap
-- [ ] Written answers: **how many units / node IDs**, and the **actual cell count + thermistor count/placement** per the export (reconciles the provisional 32/64-cell `48-10`/`48-20` profiles)
-- [ ] **Broadcast-coverage result** — the written outcome of the coverage check above: which MVP-required signals (per-cell voltages, temperatures, pack voltage/current, SoC, status/alarm flags) **are** and **are not** present in the unit's configured periodic broadcasts, plus the configured OBD2 ECU ID. This is the **ADR-015 go/no-go for Phase 2 sign-off**: any required signal not broadcast must be added to the profile at commissioning (Guardian never polls), or it reopens ADR-015 via a new ADR.
-
-## Done when
-
-Every ADR-010 profile field can be filled from the export with a citation (see [`profiles/SOURCING.md`](../../profiles/SOURCING.md)), and the raw captures replay cleanly through the (future) decoder — i.e. Phase 2 exit criteria in [`docs/implementation-plan.md`](../implementation-plan.md) are met.
+- [ ] Written confirmation from the pack designer of the **pack cell count**, plus the pack model (`48-10` or `48-20`), Orion Jr 2 CAN node ID, and thermistor count/placement
+- [ ] Written list of which configured periodic broadcasts contain per-cell voltages, temperatures, pack voltage/current, state of charge, and status/alarm flags, plus the configured OBD2 ECU ID

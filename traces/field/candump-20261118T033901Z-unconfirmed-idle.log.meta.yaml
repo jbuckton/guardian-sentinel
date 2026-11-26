@@ -1,0 +1,32 @@
+schema_version: 1
+capture: 'candump-20261118T033901Z-unconfirmed-idle.log'
+captured_at_utc: '2026-11-18T03:39:01Z'
+pack_id: 'unconfirmed'
+pack_model: 'unconfirmed'
+designer_confirmed_cell_count: unconfirmed
+orion_jr2_serial: 'unknown'
+can_node_id: 'unconfirmed'
+obd2_ecu_id: 'unknown'
+thermistors: 'unknown'
+state: 'idle'
+bitrate: 500000
+interface: 'can0'
+hardware: 'Raspberry Pi CM4 + Waveshare CM4 PoE 4G carrier + SocketCAN adapter'
+listen_only_confirmed: true
+utility_connected: false
+capture_duration_seconds: 180
+ntp_synchronised: 'yes'
+operator: 'Joshua'
+can_stats_before: 'candump-20261118T033901Z-unconfirmed-idle.can-stats-before.txt'
+can_stats_after: 'candump-20261118T033901Z-unconfirmed-idle.can-stats-after.txt'
+notes: >
+  First compliant listen-only field trace from gs-001. Verified: interface
+  reported <LISTEN-ONLY>; TX packet counter unchanged at 724 across the capture
+  (delta 0) — Guardian transmitted nothing (ADR-009/ADR-015). RX +75,534 frames.
+  Hardware limitation: mcp251x does not support CAN error-frame reporting
+  (berr-reporting), so bus-error frames are not captured (relevant to G4
+  isolated/listen-only hardware selection). Pack facts (model, cell count,
+  serial, node id, thermistors, OBD2 ECU id) remain UNCONFIRMED — to be filled
+  from the Orion Jr 2 configuration export (data-collection.md Part B), never
+  inferred (ADR-010). 8 CAN IDs; see CATALOGUE-20261118-gs001-recon.md.
+

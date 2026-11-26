@@ -1,0 +1,24 @@
+schema_version: 1
+capture: 'candump-20261120T065145Z-unconfirmed-idle.log'
+captured_at_utc: '2026-11-20T06:51:45Z'
+capture_class: recon            # NOT a compliant field trace: all pack facts unconfirmed (ADR-010); state 'idle' operator-assumed
+pack_id: 'unconfirmed'
+pack_model: 'unconfirmed'
+designer_confirmed_cell_count: unconfirmed
+orion_jr2_serial: 'unconfirmed'
+can_node_id: 'unconfirmed'
+obd2_ecu_id: 'unconfirmed'
+thermistors: 'unconfirmed'
+state: 'idle'
+bitrate: 500000
+interface: 'can0'
+hardware: 'Raspberry Pi CM4 + Waveshare CM4 PoE 4G carrier + SocketCAN adapter'
+listen_only_confirmed: true
+error_frame_reporting: false
+utility_connected: false
+capture_duration_seconds: 180
+ntp_synchronised: 'yes'
+operator: 'joshua (via Claude Code, remote SSH)'
+can_stats_before: 'candump-20261120T065145Z-unconfirmed-idle.can-stats-before.txt'
+can_stats_after: 'candump-20261120T065145Z-unconfirmed-idle.can-stats-after.txt'
+notes: 'Recon capture; pack facts unconfirmed pending Orion Jr 2 config export (data-collection.md Part B). Run remotely via Claude Code over SSH. Error-frame reporting unsupported on this adapter.'

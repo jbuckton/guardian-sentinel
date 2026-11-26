@@ -1,0 +1,46 @@
+schema_version: 1
+kind: active_diagnostic_probe          # NOT a broadcast-only capture
+capture: probe-session-20261118-gs001-p0a09.jsonl
+annotated_record: probe-session-20261118-gs001-p0a09.md
+captured_at_utc: "2026-11-18"
+device: gs-001
+pack_id: unconfirmed
+pack_model: unconfirmed
+designer_confirmed_cell_count: unconfirmed
+orion_jr2_serial: unconfirmed
+request_can_id: "0x7E3"
+response_can_id: "0x7EB"
+bitrate: 500000
+interface: can0
+hardware: "Raspberry Pi CM4 (mcp251x SPI CAN)"
+listen_only_confirmed: false           # interface was switched OUT of listen-only for this session
+transmitted_on_pack_bus: true          # Guardian TX'd request frames (outside ADR-015 normal operation)
+listen_only_restored_after: true
+utility_connected: false
+ntp_synchronised: "yes"
+reconstructed: true                     # built from observed session exchanges, not a live candump -L file
+fault_under_investigation: "P0A09 (Internal Hardware Fault)"
+findings:
+  p0a09_present: true
+  p0a09_pending: true                   # Mode 0x07
+  p0a09_permanent: true                 # Mode 0x0A
+  p0a09_confirmed_at_probe_time: false  # Mode 0x03 count 0
+  dtc_status_mask: "0x0E"
+  inf: "0x8008"                          # matches reported "INF 8008"
+  inf_8008_meaning: "internal watchdog redundancy fault (Orion P0A09 subcode 8008/8010); documented to occur when no cells are enabled/loaded in the battery profile"
+  inf_8008_reason_domain: configuration  # ADR-012: fault(configuration), NOT fault(battery)
+  inf_8008_prescribed_check: "cell count in profile configuration (Orion)"
+  inf_8008_source: "https://www.orionbms.com/faultcodes/DTC%20P0A09%20-%20Internal%20Hardware%20Fault.pdf"
+  sub_code_1_resolved: false             # not literally present over CAN; likely Utility occurrence index — reconcile with Utility
+  mode_02_freeze_frame: stubbed
+  mode_17_dtc_detail: works
+  mode_21_extended_data: works
+  mode_22_live_data: works
+  mode_b2: "negative NRC 0x12 (format unknown)"
+decoding_status: "reverse-engineered evidence; UNCONFIRMED against Orion docs/config export (ADR-001/010)"
+notes: >
+  One-off manual diagnostic session investigating P0A09 on the deployed unit.
+  Response bytes recorded exactly as observed; request bytes exactly as sent.
+  Any use of these definitions in the orion_jr2 adapter requires confirmation
+  from authoritative Orion sources and a new ADR amending ADR-015
+  (broadcast-only acquisition).
